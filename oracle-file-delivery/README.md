@@ -50,7 +50,7 @@ high-volume path.
 ```bash
 sudo bash oracles/scripts/install.sh \
     file-delivery \
-    https://github.com/miraland-labs/x402/releases/download/oracle-file-delivery-vX/oracle-file-delivery \
+    https://github.com/miraland-labs/oracles/releases/download/oracle-file-delivery-vX/oracle-file-delivery \
     /tmp/oracle-file-delivery.env
 sudo systemctl status oracle@file-delivery
 ```

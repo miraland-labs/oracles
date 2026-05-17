@@ -52,7 +52,7 @@ The binary listens on `BIND_ADDR` (default `0.0.0.0:4020`) and exposes:
 ```bash
 sudo bash oracles/scripts/install.sh \
     api-quality \
-    https://github.com/miraland-labs/x402/releases/download/oracle-api-quality-vX/oracle-api-quality \
+    https://github.com/miraland-labs/oracles/releases/download/oracle-api-quality-vX/oracle-api-quality \
     /tmp/oracle-api-quality.env
 sudo systemctl status oracle@api-quality
 ```

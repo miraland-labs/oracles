@@ -31,20 +31,20 @@ Cross-references:
     {
       "profileId": "x402/oracle/api-quality/v1",
       "operatorPubkey": "Pubkey1",
-      "normativeSpecUrl": "https://github.com/miraland-labs/x402/blob/main/oracles/oracle-api-quality/spec/api-quality-v1/NORMATIVE.md",
+      "normativeSpecUrl": "https://github.com/miraland-labs/oracles/blob/main/oracle-api-quality/spec/api-quality-v1/NORMATIVE.md",
       "registryBaseUrl": "https://registry.example.com/v1/registry"
     },
     {
       "profileId": "x402/oracle/onchain-transfer/v1",
       "operatorPubkey": "Pubkey2",
-      "normativeSpecUrl": "https://github.com/miraland-labs/x402/blob/main/oracles/oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md",
+      "normativeSpecUrl": "https://github.com/miraland-labs/oracles/blob/main/oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md",
       "supportedClusters": ["mainnet-beta", "devnet"],
       "supportedMints": ["Es9vMFr...", "USDT..."]
     },
     {
       "profileId": "x402/oracle/file-delivery/attestation/v1",
       "operatorPubkey": "Pubkey3",
-      "normativeSpecUrl": "https://github.com/miraland-labs/x402/blob/main/oracles/oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md",
+      "normativeSpecUrl": "https://github.com/miraland-labs/oracles/blob/main/oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md",
       "registryBaseUrl": "https://registry.example.com/v1/registry",
       "maxBlobBytes": 5368709120
     }
@@ -113,19 +113,19 @@ the family the buyer wants (Requirement 8.3).
   "slaEscrowOracleProfiles": [
     {
       "profileId": "x402/oracle/api-quality/v1",
-      "normativeSpecUrl": "https://github.com/miraland-labs/x402/blob/main/oracles/oracle-api-quality/spec/api-quality-v1/NORMATIVE.md",
+      "normativeSpecUrl": "https://github.com/miraland-labs/oracles/blob/main/oracle-api-quality/spec/api-quality-v1/NORMATIVE.md",
       "defaultOperatorPubkey": "Pubkey1",
       "repositoryPath": "oracles/oracle-api-quality"
     },
     {
       "profileId": "x402/oracle/onchain-transfer/v1",
-      "normativeSpecUrl": "https://github.com/miraland-labs/x402/blob/main/oracles/oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md",
+      "normativeSpecUrl": "https://github.com/miraland-labs/oracles/blob/main/oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md",
       "defaultOperatorPubkey": "Pubkey2",
       "repositoryPath": "oracles/oracle-onchain-transfer"
     },
     {
       "profileId": "x402/oracle/file-delivery/attestation/v1",
-      "normativeSpecUrl": "https://github.com/miraland-labs/x402/blob/main/oracles/oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md",
+      "normativeSpecUrl": "https://github.com/miraland-labs/oracles/blob/main/oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md",
       "defaultOperatorPubkey": "Pubkey3",
       "repositoryPath": "oracles/oracle-file-delivery"
     }

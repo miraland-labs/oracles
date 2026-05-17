@@ -40,7 +40,7 @@ Default port: `:4021`. HTTP surface is identical to the api-quality binary
 ```bash
 sudo bash oracles/scripts/install.sh \
     onchain-transfer \
-    https://github.com/miraland-labs/x402/releases/download/oracle-onchain-transfer-vX/oracle-onchain-transfer \
+    https://github.com/miraland-labs/oracles/releases/download/oracle-onchain-transfer-vX/oracle-onchain-transfer \
     /tmp/oracle-onchain-transfer.env
 sudo systemctl status oracle@onchain-transfer
 ```
