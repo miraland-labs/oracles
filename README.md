@@ -18,6 +18,7 @@ workspace; complexity lives off-chain.
 
 | File                                                              | Purpose                                                                |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`docs/SLA_ESCROW_PROTOCOL.md`](docs/SLA_ESCROW_PROTOCOL.md)      | **First-time integrators start here.** Cross-actor reference for the buyer / seller / oracle / pr402 flow. |
 | [`docs/SELLER_GUIDE.md`](docs/SELLER_GUIDE.md)                    | **Sellers start here.** Three copy-paste integration recipes.          |
 | [`docs/BUYER_GUIDE.md`](docs/BUYER_GUIDE.md)                      | **Buyers start here.** How to pick an oracle and fund via pr402.       |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)                        | Full bring-up from clean Ubuntu 24.04 to production-ready oracle.      |
@@ -32,6 +33,10 @@ workspace; complexity lives off-chain.
 | [`.kiro/specs/multi-category-oracle-architecture/`](../.kiro/specs/multi-category-oracle-architecture/) | Architectural source of truth: 13 constraints + 33 properties + tasks. |
 
 ## Quick links
+
+- **First time integrating, want the big picture**: read
+  [`docs/SLA_ESCROW_PROTOCOL.md`](docs/SLA_ESCROW_PROTOCOL.md) — the
+  cross-actor reference (~10 min read).
 
 - **You're a seller integrating with this**: read
   [`docs/SELLER_GUIDE.md`](docs/SELLER_GUIDE.md) — five-minute scan.

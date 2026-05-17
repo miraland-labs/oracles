@@ -8,6 +8,20 @@ use crate::PROFILE_ID;
 pub struct TransferSla {
     pub version: u32,
     pub profile_id: String,
+    /// REQUIRED (Wave B §1.2). Hex-encoded 32-byte `payment_uid` from the
+    /// on-chain `Payment` this SLA is bound to. The SLA is hashed *with this
+    /// field included* into `Payment.sla_hash`, so the document is
+    /// cryptographically tied to one payment. The evaluator refuses evidence
+    /// whose `payment_uid` does not match the on-chain payment that the job
+    /// was built for.
+    pub payment_uid: String,
+    /// OPTIONAL (Wave B §1.4). Hex-encoded fresh random 32-byte buyer nonce.
+    /// When set, the seller must echo it back in `TransferEvidence`. Defeats
+    /// cross-SLA reuse where two buyers with identical SLA templates could
+    /// otherwise have a seller replay one's evidence against the other's
+    /// payment.
+    #[serde(default)]
+    pub buyer_nonce: Option<String>,
     pub cluster: TransferCluster,
     pub expected_transfers: Vec<ExpectedTransfer>,
     #[serde(default)]

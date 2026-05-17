@@ -43,6 +43,8 @@ fn make_job(uid_byte: u8, sla_hash_byte: u8) -> EvaluationJob {
         mint: Pubkey::new_unique(),
         oracle_authority: Pubkey::new_unique(),
         expires_at: 1_900_000_000,
+        created_at: 0,
+        delivery_cutoff_seconds: 0,
         sla_bytes: Some(Bytes::from_static(b"{\"profile_id\":\"x402/test/v1\"}")),
     }
 }

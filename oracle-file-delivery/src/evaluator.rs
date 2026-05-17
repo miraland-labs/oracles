@@ -14,7 +14,7 @@ use oracle_common::{
     error::OracleError,
     evaluator::{EvaluationContext, OracleEvaluator},
     resolution_codes::file_delivery,
-    types::{CheckResult, EvaluationResult},
+    types::{CheckResult, EvaluationResult, EvidenceKey},
 };
 
 use crate::{evidence::FileDeliveryEvidence, sla::FileDeliverySla, PROFILE_ID};
@@ -39,7 +39,7 @@ impl OracleEvaluator for FileDeliveryEvaluator {
 
     async fn evaluate(
         &self,
-        _ctx: &EvaluationContext<'_>,
+        ctx: &EvaluationContext<'_>,
         sla: &Self::Sla,
         evidence: &Self::Evidence,
     ) -> Result<EvaluationResult, OracleError> {
@@ -90,16 +90,67 @@ impl OracleEvaluator for FileDeliveryEvaluator {
                     "size" => file_delivery::BLOB_SIZE_OUT_OF_RANGE,
                     "mime" => file_delivery::BLOB_MIME_MISMATCH,
                     "attestor_signature" => file_delivery::BLOB_ATTESTOR_SIGNATURE_INVALID,
+                    "delivery_hash_replay" => file_delivery::BLOB_DELIVERY_HASH_REUSED,
                     _ => 255,
                 })
                 .unwrap_or(255)
         };
+
+        // Wave A §1.3 cross-payment replay refusal: if all attestation checks
+        // pass, probe the ledger for any *other* `payment_uid` that already
+        // settled against the same `delivery_hash`. Detection means a seller is
+        // reusing a single uploaded blob to settle multiple payments — refuse
+        // with `BLOB_DELIVERY_HASH_REUSED`.
+        if approved {
+            if let Some(ledger) = ctx.ledger {
+                match ledger
+                    .evidence_key_settled_for_other_payment(
+                        &ctx.job.payment_uid,
+                        "delivery_hash",
+                        &evidence.blob_sha256_hex,
+                    )
+                    .await
+                {
+                    Ok(true) => {
+                        checks.push(CheckResult {
+                            name: "delivery_hash_replay".into(),
+                            passed: false,
+                            detail: format!(
+                                "delivery_hash {} was already settled for a different payment_uid; cross-payment replay refused",
+                                evidence.blob_sha256_hex
+                            ),
+                        });
+                        return Ok(EvaluationResult {
+                            approved: false,
+                            resolution_reason: file_delivery::BLOB_DELIVERY_HASH_REUSED,
+                            checks,
+                        });
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        // Ledger unreachable: surface as worker-level error so
+                        // the job retries rather than approving without the
+                        // check.
+                        return Err(e);
+                    }
+                }
+            }
+        }
 
         Ok(EvaluationResult {
             approved,
             resolution_reason,
             checks,
         })
+    }
+
+    fn evidence_keys(&self, _sla: &Self::Sla, evidence: &Self::Evidence) -> Vec<EvidenceKey> {
+        // The blob's content-addressed hash is the unique key for cross-payment
+        // replay protection.
+        vec![EvidenceKey {
+            kind: "delivery_hash".into(),
+            value: evidence.blob_sha256_hex.clone(),
+        }]
     }
 }
 
@@ -111,6 +162,8 @@ mod tests {
         FileDeliverySla {
             version: 1,
             profile_id: PROFILE_ID.into(),
+            payment_uid: "00".repeat(32),
+            buyer_nonce: None,
             expected_size_bytes_min: 1_000,
             expected_size_bytes_max: 1_000_000,
             expected_mime: Some("video/mp4".into()),
@@ -146,6 +199,8 @@ mod tests {
             mint: solana_sdk::pubkey::Pubkey::new_unique(),
             oracle_authority: solana_sdk::pubkey::Pubkey::new_unique(),
             expires_at: 0,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
             sla_bytes: None,
         };
         let ctx = EvaluationContext {
@@ -153,6 +208,7 @@ mod tests {
             http: &http,
             job: &job,
             strict: true,
+            ledger: None,
         };
 
         let r = FileDeliveryEvaluator::new()
@@ -180,6 +236,8 @@ mod tests {
             mint: solana_sdk::pubkey::Pubkey::new_unique(),
             oracle_authority: solana_sdk::pubkey::Pubkey::new_unique(),
             expires_at: 0,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
             sla_bytes: None,
         };
         let ctx = EvaluationContext {
@@ -187,6 +245,7 @@ mod tests {
             http: &http,
             job: &job,
             strict: true,
+            ledger: None,
         };
 
         let r = FileDeliveryEvaluator::new()
@@ -210,6 +269,8 @@ mod tests {
             mint: solana_sdk::pubkey::Pubkey::new_unique(),
             oracle_authority: solana_sdk::pubkey::Pubkey::new_unique(),
             expires_at: 0,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
             sla_bytes: None,
         };
         let ctx = EvaluationContext {
@@ -217,6 +278,7 @@ mod tests {
             http: &http,
             job: &job,
             strict: true,
+            ledger: None,
         };
 
         let r = FileDeliveryEvaluator::new()
@@ -229,6 +291,119 @@ mod tests {
             .unwrap();
         assert!(!r.approved);
         assert_eq!(r.resolution_reason, file_delivery::BLOB_MIME_MISMATCH);
+    }
+
+    // -------------------------------------------------------------------------
+    // Wave A §1.3 — delivery-hash uniqueness (cross-payment replay refusal)
+    // -------------------------------------------------------------------------
+
+    /// Stub `LedgerProbe` that returns a fixed answer.
+    struct StubLedger {
+        already_settled: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl oracle_common::evaluator::LedgerProbe for StubLedger {
+        async fn evidence_key_settled_for_other_payment(
+            &self,
+            _current_uid: &[u8; 32],
+            _key_kind: &str,
+            _key_value: &str,
+        ) -> Result<bool, oracle_common::error::OracleError> {
+            Ok(self.already_settled)
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_when_delivery_hash_already_settled_for_other_payment() {
+        let rpc = rpc();
+        let http = reqwest::Client::builder().build().unwrap();
+        let job = oracle_common::types::EvaluationJob {
+            payment_uid: [0u8; 32],
+            payment_pubkey: solana_sdk::pubkey::Pubkey::new_unique(),
+            sla_hash: [0u8; 32],
+            delivery_hash: [0u8; 32],
+            amount: 0,
+            mint: solana_sdk::pubkey::Pubkey::new_unique(),
+            oracle_authority: solana_sdk::pubkey::Pubkey::new_unique(),
+            expires_at: 0,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
+            sla_bytes: None,
+        };
+        let ledger: std::sync::Arc<dyn oracle_common::evaluator::LedgerProbe> =
+            std::sync::Arc::new(StubLedger {
+                already_settled: true,
+            });
+        let ctx = EvaluationContext {
+            rpc: &rpc,
+            http: &http,
+            job: &job,
+            strict: true,
+            ledger: Some(&ledger),
+        };
+        let r = FileDeliveryEvaluator::new()
+            .evaluate(
+                &ctx,
+                &sla_basic(),
+                &evidence_with(50_000, Some("video/mp4")),
+            )
+            .await
+            .unwrap();
+        assert!(!r.approved);
+        assert_eq!(
+            r.resolution_reason,
+            file_delivery::BLOB_DELIVERY_HASH_REUSED
+        );
+    }
+
+    #[tokio::test]
+    async fn approves_when_delivery_hash_is_fresh() {
+        let rpc = rpc();
+        let http = reqwest::Client::builder().build().unwrap();
+        let job = oracle_common::types::EvaluationJob {
+            payment_uid: [0u8; 32],
+            payment_pubkey: solana_sdk::pubkey::Pubkey::new_unique(),
+            sla_hash: [0u8; 32],
+            delivery_hash: [0u8; 32],
+            amount: 0,
+            mint: solana_sdk::pubkey::Pubkey::new_unique(),
+            oracle_authority: solana_sdk::pubkey::Pubkey::new_unique(),
+            expires_at: 0,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
+            sla_bytes: None,
+        };
+        let ledger: std::sync::Arc<dyn oracle_common::evaluator::LedgerProbe> =
+            std::sync::Arc::new(StubLedger {
+                already_settled: false,
+            });
+        let ctx = EvaluationContext {
+            rpc: &rpc,
+            http: &http,
+            job: &job,
+            strict: true,
+            ledger: Some(&ledger),
+        };
+        let r = FileDeliveryEvaluator::new()
+            .evaluate(
+                &ctx,
+                &sla_basic(),
+                &evidence_with(50_000, Some("video/mp4")),
+            )
+            .await
+            .unwrap();
+        assert!(r.approved);
+    }
+
+    #[test]
+    fn evidence_keys_returns_delivery_hash() {
+        let evaluator = FileDeliveryEvaluator::new();
+        let evidence = evidence_with(1234, Some("video/mp4"));
+        let keys = OracleEvaluator::evidence_keys(&evaluator, &sla_basic(), &evidence);
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].kind, "delivery_hash");
+        assert_eq!(keys[0].value, "00".repeat(32));
     }
 
     proptest::proptest! {
@@ -268,9 +443,11 @@ mod tests {
                 mint: solana_sdk::pubkey::Pubkey::new_unique(),
                 oracle_authority: solana_sdk::pubkey::Pubkey::new_unique(),
                 expires_at: 0,
+                created_at: 0,
+                delivery_cutoff_seconds: 0,
                 sla_bytes: None,
             };
-            let ctx = EvaluationContext { rpc: &rpc, http: &http, job: &job, strict: true };
+            let ctx = EvaluationContext { rpc: &rpc, http: &http, job: &job, strict: true, ledger: None };
 
             // Synchronous-ish: the evaluator's body is a sync computation; we still
             // need a runtime for the `async` trait method.

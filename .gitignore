@@ -1,3 +1,4 @@
+marketing/
 target/
 **/target/
 *.env

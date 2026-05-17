@@ -14,6 +14,20 @@ pub struct SlaDocument {
     pub version: u32,
     /// REQUIRED. Must equal `x402/oracles/api-quality/v1` (see C8 in design.md).
     pub profile_id: String,
+    /// REQUIRED (Wave B §1.2). Hex-encoded 32-byte `payment_uid` from the
+    /// on-chain `Payment` this SLA is bound to. Baked in *before* the buyer
+    /// hashes the SLA into `Payment.sla_hash`, so the SLA bytes are
+    /// cryptographically tied to one and only one payment. The evaluator
+    /// refuses evidence whose `payment_uid` does not match the on-chain
+    /// payment that the job was built for.
+    pub payment_uid: String,
+    /// OPTIONAL (Wave B §1.4). Hex-encoded fresh random 32-byte buyer nonce.
+    /// When set, the SLA hash carries it (because the SLA is hashed as bytes),
+    /// and the evaluator requires the seller to echo the same nonce in the
+    /// `DeliveryEvidence`. Defeats cross-SLA reuse of identical-template
+    /// measurements.
+    #[serde(default)]
+    pub buyer_nonce: Option<String>,
     pub endpoint: String,
     pub method: String,
     #[serde(default)]
@@ -55,7 +69,7 @@ mod tests {
     #[test]
     fn defaults_apply_to_optional_fields() {
         let s: SlaDocument = serde_json::from_str(
-            r#"{"version":1,"profile_id":"x402/oracles/api-quality/v1","endpoint":"https://x","method":"GET"}"#,
+            r#"{"version":1,"profile_id":"x402/oracles/api-quality/v1","payment_uid":"0000000000000000000000000000000000000000000000000000000000000000","endpoint":"https://x","method":"GET"}"#,
         )
         .unwrap();
         assert_eq!(s.version, 1);
@@ -65,12 +79,13 @@ mod tests {
         assert!(s.required_fields.is_empty());
         assert_eq!(s.min_body_length, None);
         assert!(s.profile_id_matches());
+        assert!(s.buyer_nonce.is_none());
     }
 
     #[test]
     fn profile_id_mismatch_detected() {
         let s: SlaDocument = serde_json::from_str(
-            r#"{"version":1,"profile_id":"x402/something/v1","endpoint":"https://x","method":"GET"}"#,
+            r#"{"version":1,"profile_id":"x402/something/v1","payment_uid":"0000000000000000000000000000000000000000000000000000000000000000","endpoint":"https://x","method":"GET"}"#,
         )
         .unwrap();
         assert!(!s.profile_id_matches());

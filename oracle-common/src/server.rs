@@ -446,11 +446,16 @@ async fn run_pipeline_with_state(
     state: Arc<AppState>,
     job: &EvaluationJob,
 ) -> Result<pipeline::PipelineOutcome, crate::error::OracleError> {
+    let ledger_probe: Option<Arc<dyn crate::evaluator::LedgerProbe>> = state
+        .db
+        .as_ref()
+        .map(|db| Arc::new(db.clone()) as Arc<dyn crate::evaluator::LedgerProbe>);
     let ctx = crate::evaluator::EvaluationContext {
         rpc: &state.rpc,
         http: &state.http,
         job,
         strict: state.config.strict_profile,
+        ledger: ledger_probe.as_ref(),
     };
     pipeline::run_pipeline(&state.profiles, &ctx, job.sla_bytes.as_ref()).await
 }

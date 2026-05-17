@@ -172,6 +172,11 @@ pub async fn read_payment(
         mint: payment.mint,
         oracle_authority: payment.oracle_authority,
         expires_at: payment.expires_at,
+        // Wave A §1.1: plumb on-chain timestamps so evaluators can enforce the
+        // freshness lower bound (`created_at`) and the deadline-side sanity
+        // bound (`expires_at - delivery_cutoff_seconds`).
+        created_at: payment.created_at,
+        delivery_cutoff_seconds: payment.delivery_cutoff_seconds,
         sla_bytes: None, // hoisted in by the chain monitor below if available
     }))
 }
@@ -584,6 +589,8 @@ mod tests {
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
             expires_at: 0,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
             sla_bytes: None,
         };
         assert!(event_matches_job(&[ev], &job));
@@ -600,6 +607,8 @@ mod tests {
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
             expires_at: 0,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
             sla_bytes: None,
         };
         // Empty events → permissive (caller decides via require_event_match).
@@ -623,6 +632,8 @@ mod tests {
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
             expires_at: 0,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
             sla_bytes: None,
         };
         assert!(!event_matches_job(&[ev], &job));

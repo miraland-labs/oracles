@@ -158,3 +158,32 @@ CREATE TABLE IF NOT EXISTS oracle_registered_profiles (
     binary_version  TEXT,
     last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ---------------------------------------------------------------------------
+-- oracle_evidence_keys: cross-payment evidence-key index for replay protection
+-- (Wave A §1.3 / §2.2.1).
+--
+-- For each settled job, the worker records the evidence keys that uniquely
+-- identify the off-chain artifact (e.g. an onchain-transfer `tx_signature`,
+-- or a file-delivery `delivery_hash`). Subsequent evaluations probe this
+-- table to refuse settling a different `payment_uid` against the same key —
+-- preventing a seller from reusing one historical transfer or one uploaded
+-- blob to settle multiple payments.
+--
+-- `key_kind` is a free-form discriminator chosen by the evaluator
+-- (e.g. `'tx_signature'`, `'delivery_hash'`); semantics live in code, not
+-- in the schema.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS oracle_evidence_keys (
+    id            BIGSERIAL PRIMARY KEY,
+    payment_uid   TEXT NOT NULL,
+    key_kind      TEXT NOT NULL,
+    key_value     TEXT NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT oracle_evidence_keys_unique UNIQUE (payment_uid, key_kind, key_value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_oracle_evidence_keys_lookup
+    ON oracle_evidence_keys (key_kind, key_value);
+CREATE INDEX IF NOT EXISTS idx_oracle_evidence_keys_payment_uid
+    ON oracle_evidence_keys (payment_uid);

@@ -107,12 +107,14 @@ where
             .fetch(&ctx.job.delivery_hash, ArtifactKind::Delivery)
             .await?;
         let result = self.evaluator.evaluate(ctx, &sla, &evidence).await?;
+        let evidence_keys = self.evaluator.evidence_keys(&sla, &evidence);
         let resolution_hash =
             compute_resolution_hash_typed(ctx.job, self.evaluator.profile_id(), &result, &sla)?;
         Ok(EvaluationOutcome {
             result,
             resolution_hash,
             signature: None,
+            evidence_keys,
         })
     }
 }

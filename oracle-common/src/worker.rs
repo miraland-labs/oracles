@@ -93,11 +93,24 @@ pub async fn run_worker(state: Arc<AppState>, mut job_rx: mpsc::Receiver<Evaluat
             tokio::time::timeout(timeout, run_pipeline_and_settle(&state, &job)).await;
 
         match outcome_res {
-            Ok(Ok((sig, outcome_result, resolution_hash))) => {
+            Ok(Ok((sig, outcome_result, resolution_hash, evidence_keys))) => {
                 if let Some(db) = &state.db {
                     let _ = db
                         .record_settled(&job, &outcome_result, sig.as_deref(), &resolution_hash)
                         .await;
+                    // Wave A §1.3 / §2.2.1 — index evidence keys for cross-payment
+                    // replay protection of *future* evaluations. Only on approve so
+                    // that rejected attempts don't poison the index against the seller.
+                    if outcome_result.approved {
+                        for ek in &evidence_keys {
+                            if let Err(e) = db
+                                .record_evidence_key(&job.payment_uid, &ek.kind, &ek.value)
+                                .await
+                            {
+                                warn!(error = %e, kind = %ek.kind, "evidence-key insert failed");
+                            }
+                        }
+                    }
                     chain::persist_slot_watermark(db, &state.health).await;
                 }
                 let mut stats = state.stats.write().await;
@@ -162,7 +175,15 @@ pub async fn run_worker(state: Arc<AppState>, mut job_rx: mpsc::Receiver<Evaluat
 async fn run_pipeline_and_settle(
     state: &Arc<AppState>,
     job: &EvaluationJob,
-) -> Result<(Option<String>, crate::types::EvaluationResult, [u8; 32]), crate::error::OracleError> {
+) -> Result<
+    (
+        Option<String>,
+        crate::types::EvaluationResult,
+        [u8; 32],
+        Vec<crate::types::EvidenceKey>,
+    ),
+    crate::error::OracleError,
+> {
     // Eligibility — defense-in-depth so we don't waste SOL on
     // payments that have already settled, expired, or been reassigned.
     if !settler::is_eligible(&state.rpc, &state.config, job).await? {
@@ -172,11 +193,21 @@ async fn run_pipeline_and_settle(
         )));
     }
 
+    // Build the optional ledger probe. We materialize the `Arc<dyn LedgerProbe>`
+    // here (rather than storing it on `AppState`) because the trait object
+    // lifetime is tied to the borrow we hand to `EvaluationContext`, and
+    // `state.db: Option<OracleDb>` is the canonical source of truth.
+    let ledger_probe: Option<Arc<dyn crate::evaluator::LedgerProbe>> = state
+        .db
+        .as_ref()
+        .map(|db| Arc::new(db.clone()) as Arc<dyn crate::evaluator::LedgerProbe>);
+
     let ctx = crate::evaluator::EvaluationContext {
         rpc: &state.rpc,
         http: &state.http,
         job,
         strict: state.config.strict_profile,
+        ledger: ledger_probe.as_ref(),
     };
     let outcome = pipeline::run_pipeline(&state.profiles, &ctx, job.sla_bytes.as_ref()).await?;
 
@@ -189,5 +220,10 @@ async fn run_pipeline_and_settle(
         outcome.resolution_hash,
     )
     .await?;
-    Ok((Some(sig), outcome.result, outcome.resolution_hash))
+    Ok((
+        Some(sig),
+        outcome.result,
+        outcome.resolution_hash,
+        outcome.evidence_keys,
+    ))
 }

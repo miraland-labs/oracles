@@ -4,6 +4,11 @@
 **Document status:** Normative specification for the `oracle-api-quality` reference implementation  
 **Scope:** Off-chain SLA documents and delivery evidence for **JSON-over-HTTP** API response quality adjudication.
 
+> For the cross-actor flow (buyer / seller / oracle / pr402) that surrounds
+> this profile, see [`SLA_ESCROW_PROTOCOL.md`](../../../docs/SLA_ESCROW_PROTOCOL.md).
+> This document is normative for the per-profile rules; the protocol doc is
+> normative for the wire-level interaction.
+
 ---
 
 ## Abstract

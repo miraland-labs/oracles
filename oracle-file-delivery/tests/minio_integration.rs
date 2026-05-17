@@ -158,6 +158,8 @@ async fn minio_round_trip_5mib_blob() {
     let sla = FileDeliverySla {
         version: 1,
         profile_id: "x402/oracles/file-delivery/attestation/v1".into(),
+        payment_uid: "00".repeat(32),
+        buyer_nonce: None,
         expected_size_bytes_min: 4 * 1024 * 1024,
         expected_size_bytes_max: 6 * 1024 * 1024,
         expected_mime: None,
@@ -183,6 +185,8 @@ async fn minio_round_trip_5mib_blob() {
         mint: Pubkey::new_unique(),
         amount: 1,
         expires_at: i64::MAX,
+        created_at: 0,
+        delivery_cutoff_seconds: 0,
         sla_bytes: Some(Bytes::from(serde_json::to_vec(&sla).unwrap())),
     };
     let rpc: Arc<RpcClient> = Arc::new(RpcClient::new("http://127.0.0.1:8899".into()));
@@ -192,6 +196,7 @@ async fn minio_round_trip_5mib_blob() {
         http: &http,
         job: &job,
         strict: true,
+        ledger: None,
     };
     let result: EvaluationResult = evaluator
         .evaluate(&ctx, &sla, &evidence)

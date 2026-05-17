@@ -32,6 +32,8 @@ fn job() -> EvaluationJob {
         mint: Pubkey::new_unique(),
         oracle_authority: Pubkey::new_unique(),
         expires_at: 0,
+        created_at: 0,
+        delivery_cutoff_seconds: 0,
         sla_bytes: None,
     }
 }

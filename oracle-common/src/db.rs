@@ -15,6 +15,7 @@
 
 use std::{error::Error, time::Duration};
 
+use async_trait::async_trait;
 use deadpool_postgres::{Config, Pool, PoolConfig, Runtime};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use postgres_openssl::MakeTlsConnector;
@@ -26,6 +27,7 @@ use tracing::error;
 
 use crate::{
     error::OracleError,
+    evaluator::LedgerProbe,
     types::{EvaluationJob, EvaluationResult},
 };
 
@@ -296,6 +298,77 @@ impl OracleDb {
         }
     }
 
+    // ---- evidence-key index (cross-payment replay protection) -----------
+
+    /// Wave A §1.3 / §2.2.1 — record an evidence key against a `payment_uid`.
+    /// Idempotent on `(payment_uid, key_kind, key_value)`. Workers call this on
+    /// settle so subsequent evaluations of *other* payments can detect and refuse
+    /// reuse via [`OracleDb::evidence_key_settled_for_other_payment`].
+    pub async fn record_evidence_key(
+        &self,
+        payment_uid: &[u8; 32],
+        key_kind: &str,
+        key_value: &str,
+    ) -> Result<(), DbError> {
+        const SQL: &str = r#"
+            INSERT INTO oracle_evidence_keys (payment_uid, key_kind, key_value)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (payment_uid, key_kind, key_value) DO NOTHING
+        "#;
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| DbError::Pool(format_err_chain(&e)))?;
+        let uid = hex::encode(payment_uid);
+        match timeout(
+            Self::QUERY_TIMEOUT,
+            client.execute(SQL, &[&uid, &key_kind, &key_value]),
+        )
+        .await
+        {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(DbError::Query(format_err_chain(&e))),
+            Err(_) => Err(DbError::Timeout),
+        }
+    }
+
+    /// Wave A §1.3 / §2.2.1 — true iff `(key_kind, key_value)` was recorded
+    /// against any `payment_uid` *other than* `current_uid`. The probe is
+    /// `payment_uid`-scoped so retries against the same payment do not
+    /// false-positive.
+    pub async fn evidence_key_settled_for_other_payment(
+        &self,
+        current_uid: &[u8; 32],
+        key_kind: &str,
+        key_value: &str,
+    ) -> Result<bool, DbError> {
+        const SQL: &str = r#"
+            SELECT 1
+              FROM oracle_evidence_keys
+             WHERE key_kind = $1
+               AND key_value = $2
+               AND payment_uid <> $3
+             LIMIT 1
+        "#;
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| DbError::Pool(format_err_chain(&e)))?;
+        let uid = hex::encode(current_uid);
+        match timeout(
+            Self::QUERY_TIMEOUT,
+            client.query_opt(SQL, &[&key_kind, &key_value, &uid]),
+        )
+        .await
+        {
+            Ok(Ok(row)) => Ok(row.is_some()),
+            Ok(Err(e)) => Err(DbError::Query(format_err_chain(&e))),
+            Err(_) => Err(DbError::Timeout),
+        }
+    }
+
     // ---- internals ------------------------------------------------------
 
     /// Upsert an `oracle_jobs` row and bump the lifecycle status. The transitions
@@ -420,5 +493,22 @@ impl OracleDb {
             Ok(Err(e)) => Err(DbError::Query(format_err_chain(&e))),
             Err(_) => Err(DbError::Timeout),
         }
+    }
+}
+
+/// Bridge `OracleDb` into the abstract `LedgerProbe` so evaluators can run
+/// cross-payment replay queries through `EvaluationContext::ledger` without
+/// depending on Postgres directly.
+#[async_trait]
+impl LedgerProbe for OracleDb {
+    async fn evidence_key_settled_for_other_payment(
+        &self,
+        current_uid: &[u8; 32],
+        key_kind: &str,
+        key_value: &str,
+    ) -> Result<bool, OracleError> {
+        OracleDb::evidence_key_settled_for_other_payment(self, current_uid, key_kind, key_value)
+            .await
+            .map_err(OracleError::from)
     }
 }

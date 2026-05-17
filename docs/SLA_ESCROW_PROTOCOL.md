@@ -1,0 +1,525 @@
+# SLA-Escrow Protocol — Cross-Actor Reference
+
+**Protocol version**: 1.0 (Wave A + Wave B fields included)
+**Audience**: integrators building any of the four roles: **buyer agent**,
+**seller**, **oracle operator**, **pr402 facilitator operator**.
+
+This document describes the off-chain + on-chain interaction pattern for the
+`sla-escrow` rail. Each role-specific guide
+([`SELLER_GUIDE.md`](./SELLER_GUIDE.md), [`BUYER_GUIDE.md`](./BUYER_GUIDE.md),
+[`DEPLOYMENT.md`](./DEPLOYMENT.md)) tells *one* role what *they* do; this
+document tells everyone what *all four* roles do **together**, so a new
+integrator can read one page and understand the whole protocol before
+shipping code.
+
+If something here disagrees with a role-specific guide, this document is
+authoritative for the wire-level interaction. Per-role guides may add
+implementation tips on top.
+
+---
+
+## 1. Overview
+
+Four actors collaborate to settle one payment for one piece of work:
+
+```
+                     ┌──────────────────────┐
+                     │   pr402 facilitator  │
+                     │   (HTTP, web2)       │
+                     └──────────┬───────────┘
+                                │ build-sla-escrow-payment-tx
+                                │ /verify  /settle  /capabilities
+                                │
+            ┌────────────┐      │      ┌────────────┐
+            │   Buyer    │◀─────┴─────▶│   Seller   │
+            │   (agent)  │  HTTP-402 + │  (service) │
+            └─────┬──────┘  out-of-band └─────┬─────┘
+                  │  SLA bytes               │  SLA upload, evidence,
+                  │                           │  delivery hash
+                  ▼                           ▼
+            ┌──────────────────────────────────────┐
+            │  Oracle (HTTP registry + evaluator)  │
+            │  /v1/registry/{sla|delivery|blob}    │
+            │  /health, /evaluate, /metrics        │
+            └────────────────┬─────────────────────┘
+                             │ ConfirmOracle
+                             ▼
+            ┌──────────────────────────────────────┐
+            │  sla-escrow program (Solana on-chain)│
+            │  Payment PDA holds the truth         │
+            └──────────────────────────────────────┘
+```
+
+Three artifacts move on-chain:
+1. **`Payment.sla_hash`** — `SHA256(sla_bytes)`, committed when the buyer
+   signs `FundPayment`.
+2. **`Payment.delivery_hash`** — `SHA256(evidence_bytes)`, committed when
+   the seller signs `SubmitDelivery`.
+3. **`Payment.resolution_hash`** + `resolution_reason` + `resolution_state` —
+   committed when the oracle signs `ConfirmOracle`.
+
+Two artifacts live off-chain in the oracle's content-addressed registry:
+1. **The SLA bytes** keyed by `sla_hash`.
+2. **The delivery evidence** (JSON or blob) keyed by `delivery_hash`.
+
+The on-chain hashes anchor the off-chain bytes. The registry re-hashes on
+read, so any party can independently fetch and verify.
+
+---
+
+## 2. Actors and responsibilities
+
+| Role | Owns | Never does |
+|---|---|---|
+| **Buyer agent** | Authoring SLA bytes (including `payment_uid` and `buyer_nonce`). Signing `FundPayment`. Reading the verdict. | Never uploads SLA to the registry directly (no bearer). Never authors evidence. Never confirms oracle. |
+| **Seller** | Uploading SLA + delivery evidence to the registry (HMAC-bearer). Producing the deliverable. Signing `SubmitDelivery`. | Never authors the SLA (the buyer does). Never invents `payment_uid` or `buyer_nonce`. Never confirms oracle. |
+| **Oracle operator** | Running a binary that watches the chain, fetches SLA + evidence, evaluates per its profile, signs `ConfirmOracle`. Hosts the registry endpoint. | Never holds buyer or seller funds. Never authors SLA or evidence. Never extends TTL. |
+| **pr402 facilitator** | Discovery (`/capabilities`), tx assembly (`build-sla-escrow-payment-tx`), x402 `/verify` + `/settle`. Optional health gate. | Never sees SLA bytes (only the hash). Never sees evidence bytes. Never signs `FundPayment`, `SubmitDelivery`, or `ConfirmOracle`. |
+
+The buyer is the only role that holds escrowed funds (via the on-chain
+escrow PDA). The seller and oracle never custody funds; they only observe
+on-chain state and submit instructions.
+
+---
+
+## 3. The seven phases
+
+Each phase lists: **inputs**, **action**, **outputs**, **state changes**.
+
+### Phase 1 — Discovery
+
+**Goal**: buyer learns which oracles a seller trusts, and which oracles
+a facilitator advertises.
+
+**Buyer**:
+1. Calls the seller's API; gets HTTP 402 with `accepts[]` listing one or
+   more `scheme: "v2:solana:sla-escrow"` lines.
+2. Reads `accepts[].extra.oracleProfiles[]` for `(profileId,
+   operatorPubkey, registryUrl, normativeSpecUrl)` per oracle the seller
+   trusts.
+3. Optionally hits `GET <pr402>/api/v1/facilitator/capabilities` →
+   `slaEscrowOracleProfiles[]` to cross-check the seller's claims and to
+   read any default operator the deployment recommends.
+4. Picks one `(profileId, operatorPubkey)` pair. The buyer is free to
+   pick the seller's default or any other listed entry; the buyer is the
+   one paying.
+
+**Output**: a chosen `(profileId, oracleAuthority, registryUrl)` triple.
+
+**No on-chain or registry state changes yet.**
+
+### Phase 2 — SLA authorship (buyer-side)
+
+**Goal**: the buyer produces the exact bytes that will be hashed into
+`Payment.sla_hash`.
+
+**Buyer**:
+1. Asks pr402 for a `payment_uid` (one of three options):
+   - Pre-generate locally: `openssl rand -hex 32` → 64 hex chars.
+   - Let pr402 generate: omit `paymentUid` in the build request; pr402
+     returns one in the response (this requires authoring the SLA *after*
+     the build, hashing, and re-calling build with the hash — an extra
+     round-trip).
+   - Pre-generate via pr402's helper: pass `paymentUid` you choose.
+   - **Recommended**: pre-generate locally (option 1) so the SLA is fully
+     authored before any HTTP call to pr402.
+2. Generates `buyer_nonce`: `openssl rand -hex 32` (optional but
+   recommended; defends against cross-SLA replay when SLA terms are
+   identical across buyers).
+3. Authors the SLA bytes. The shape is per-profile (see §4); every
+   profile requires `version`, `profile_id`, `payment_uid`. Optional
+   `buyer_nonce` is universal across profiles.
+4. Computes `sla_hash = SHA256(sla_bytes)` locally. **Compute over the
+   exact bytes you will send to the seller** — don't re-serialize.
+
+**Output**: a sealed `sla.json` byte sequence + its `sla_hash`.
+
+**No on-chain or registry state changes yet.**
+
+### Phase 3 — SLA upload (seller-mediated)
+
+**Goal**: the buyer-authored SLA bytes land in the oracle's
+content-addressed registry so anyone can fetch them later.
+
+**Buyer**: hands `sla.json` to the seller via any out-of-band channel
+(HTTP request body, email, IM). The bytes are not secret — they describe
+public terms — but the seller is the one with the registry's bearer
+token.
+
+**Seller**: uploads to the oracle's registry:
+
+```bash
+SLA_HASH=$(curl -fsS -X POST "$ORACLE/v1/registry/sla" \
+    -H "Authorization: Bearer $SELLER_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @sla.json | jq -r .sha256)
+```
+
+**Output**: the registry stores `sla.json` keyed by its SHA-256 in
+`oracle_artifacts` (postgres backend) or in S3/MinIO (blob backend), and
+returns the hash + a `/v1/registry/<hash>` URL.
+
+**Buyer verifies**: the returned `sha256` MUST equal the buyer's local
+`sla_hash`. If not, abort — the seller uploaded different bytes.
+
+**Off-chain state change**: one new row in `oracle_deliveries` with
+`kind = 'sla'`, plus the artifact bytes in `oracle_artifacts` (or S3/MinIO).
+**No on-chain state change yet.**
+
+### Phase 4 — FundPayment (buyer-side)
+
+**Goal**: the buyer locks tokens into escrow, committing to `sla_hash`
+and binding the payment to the chosen oracle.
+
+**Buyer**: calls pr402:
+
+```bash
+BUILD_BODY=$(jq -n \
+  --arg payer "$BUYER_PUBKEY" \
+  --argjson accepted "$ACCEPTED" \
+  --argjson resource "$RESOURCE" \
+  --arg slaHash "$SLA_HASH" \
+  --arg oracleAuthority "$ORACLE_AUTHORITY" \
+  --arg paymentUid "$PAYMENT_UID" \
+  '{payer:$payer, accepted:$accepted, resource:$resource,
+    slaHash:$slaHash, oracleAuthority:$oracleAuthority,
+    paymentUid:$paymentUid}')
+
+UNSIGNED=$(curl -fsS -X POST "$PR402/api/v1/facilitator/build-sla-escrow-payment-tx" \
+    -H "Content-Type: application/json" \
+    -d "$BUILD_BODY")
+```
+
+**pr402** returns an unsigned `VersionedTransaction` containing one
+`FundPayment` instruction with `(payment_uid, sla_hash, mint, amount,
+oracle_authority, ttl_seconds, …)` plus a pre-filled `verifyBodyTemplate`
+for the next phase.
+
+**Buyer signs and submits** the transaction.
+
+**On-chain state change**: a new `Payment` PDA is created with:
+- `payment_uid`, `sla_hash`, `oracle_authority`, `amount`, `mint`
+  (committed verbatim from the instruction).
+- `created_at` = current block timestamp.
+- `expires_at` = `created_at + ttl_seconds`.
+- `state = 0` (Funded), `resolution_state = 0` (Pending).
+- `delivery_hash = [0u8; 32]`, `resolution_hash = [0u8; 32]` (set in
+  later phases).
+
+The buyer's tokens move to the escrow ATA derived from `(escrow_pda,
+mint)`.
+
+### Phase 5 — Work + delivery upload (seller-side)
+
+**Goal**: the seller produces the deliverable and uploads evidence to the
+registry.
+
+**Seller**:
+1. Re-fetches the SLA bytes from the registry to read what the buyer
+   committed to:
+   ```bash
+   SLA=$(curl -fsS "$ORACLE/v1/registry/$SLA_HASH")
+   PAYMENT_UID=$(echo "$SLA" | jq -r .payment_uid)
+   BUYER_NONCE=$(echo "$SLA" | jq -r '.buyer_nonce // empty')
+   ```
+   The registry re-hashes the bytes before serving, so you can trust them.
+2. Performs the work. The shape of "the work" depends on the profile
+   (call an HTTP API and capture the response, broadcast a Solana
+   transfer, generate a file).
+3. Authors evidence per the profile. Echo `payment_uid` (and
+   `buyer_nonce` when present) verbatim. The oracle compares.
+4. Uploads evidence:
+   ```bash
+   DELIVERY_HASH=$(curl -fsS -X POST "$ORACLE/v1/registry/delivery" \
+       -H "Authorization: Bearer $SELLER_TOKEN" \
+       -H "Content-Type: application/json" \
+       --data-binary @delivery.json | jq -r .sha256)
+   ```
+   File-delivery profiles use `POST /v1/registry/blob` with the file
+   bytes directly; the file *is* the evidence.
+
+**Output**: a registry-stored evidence artifact + its `delivery_hash`.
+
+**Off-chain state change**: one new row in `oracle_deliveries` with
+`kind = 'delivery'` (or `'blob'` for file-delivery), plus the artifact
+in `oracle_artifacts` or S3/MinIO. **No on-chain state change yet.**
+
+### Phase 6 — SubmitDelivery (seller-side)
+
+**Goal**: the seller anchors `delivery_hash` on-chain so the oracle can
+detect the work is ready.
+
+**Seller**: signs and submits a `SubmitDelivery` instruction:
+```bash
+sla-escrow submit-delivery \
+    --seller /path/to/seller-keypair.json \
+    --payment-uid "$PAYMENT_UID" \
+    --delivery-hash "$DELIVERY_HASH"
+```
+
+The on-chain program enforces:
+- `payment.seller == ix_signer` (only the bound seller may submit).
+- `payment.state == Funded` and `resolution_state == Pending`.
+- `payment.expires_at - delivery_cutoff_seconds >= clock.unix_timestamp`
+  (deadline-side enforcement, Wave A §1.1 boundary).
+
+**On-chain state change**:
+- `Payment.delivery_hash = <provided>`.
+- `Payment.delivery_timestamp = clock.unix_timestamp`.
+- A `DeliverySubmittedEvent` is emitted in `Program data:` logs (the
+  oracle subscribes to this).
+
+### Phase 7 — Oracle adjudication
+
+**Goal**: the oracle observes the on-chain delivery, fetches the
+artifacts, evaluates them against the SLA, and signs `ConfirmOracle`.
+
+**Oracle binary**:
+1. Receives the `DeliverySubmittedEvent` via WebSocket subscription to
+   `logsSubscribe` filtered on the program ID.
+2. Reads the `Payment` account directly from RPC; checks
+   `oracle_authority == self.pubkey` and pending state.
+3. Fetches **both** artifacts from its own registry (content-addressed,
+   no auth required):
+   ```
+   GET /v1/registry/<sla_hash>      → reads buyer_nonce from SLA
+   GET /v1/registry/<delivery_hash> → reads buyer_nonce from evidence
+   ```
+4. Verifies `payment_uid` and `buyer_nonce` (when present) match between
+   SLA and evidence and against `Payment.payment_uid`.
+5. Runs the profile-specific check battery (`OracleEvaluator::evaluate`):
+   freshness (`evidence ≥ Payment.created_at`, Wave A §1.1), profile
+   checks (status code / latency / size / mime / on-chain delta /
+   tx-signature uniqueness).
+6. Computes `resolution_hash` over a canonical envelope of
+   `(profile_id, payment_uid, sla_hash, delivery_hash, verdict, checks)`.
+   Anyone holding the SLA + evidence bytes can recompute and verify.
+7. Signs and submits `ConfirmOracle` with `(approve, resolution_reason,
+   resolution_hash)`.
+
+**On-chain state change**:
+- `Payment.resolution_state = 1` (Approved) or `2` (Rejected).
+- `Payment.resolution_reason = <reason u16>`.
+- `Payment.resolution_hash = <32 bytes>`.
+- A `PaymentOracleConfirmedEvent` is emitted.
+
+### Phase 8 — Settlement (anyone)
+
+**Goal**: tokens move out of escrow per the verdict.
+
+After `ConfirmOracle`:
+- **Approved**: anyone (buyer, seller, or pr402's `/settle`) can call
+  `ReleasePayment`. Tokens flow to `Payment.seller` (the merchant
+  payout wallet, which may be a SplitVault for fee sharding).
+- **Rejected**: anyone can call `RefundPayment`. Tokens flow back to
+  `Payment.buyer`.
+- **Expired without `ConfirmOracle`**: anyone can call `RefundPayment`
+  after `expires_at`. Buyer reclaims.
+
+**On-chain state change**:
+- `Payment.state` flips to `1` (Released) or `2` (Refunded).
+- A `PaymentReleasedEvent` / `PaymentRefundedEvent` is emitted.
+- `Payment.closed_at` is set.
+
+The Payment account remains rent-exempt until anyone calls `ClosePayment`
+(after `closure_delay_seconds`); rent flows back to the buyer.
+
+---
+
+## 4. Field requirements per profile
+
+The base SLA shape is the same across profiles:
+
+| Field | Required | Source | Notes |
+|---|---|---|---|
+| `version` | yes | buyer | Currently `1`. |
+| `profile_id` | yes | buyer | Must match the chosen profile exactly (e.g. `x402/oracles/api-quality/v1`). |
+| `payment_uid` | yes | buyer | 64 hex chars. Wave B §1.2. Hex of `Payment.payment_uid`. |
+| `buyer_nonce` | optional | buyer | 64 hex chars. Wave B §1.4. Defends cross-SLA replay. |
+
+Profile-specific SLA fields:
+
+### `x402/oracles/api-quality/v1`
+- `endpoint` (string), `method` (string)
+- `min_status_code` / `max_status_code` (u16)
+- `max_latency_ms` (u64)
+- `required_fields[]`, `response_schema` (JSON Schema, optional)
+- `min_body_length` (optional)
+
+Evidence: `status_code`, `latency_ms`, `response_body`,
+`response_headers` (optional), `timestamp`, `payment_uid` (echoed),
+`buyer_nonce` (echoed when SLA carried one).
+
+### `x402/oracles/onchain-transfer/v1`
+- `cluster` (`mainnet-beta` / `devnet` / `testnet`)
+- `expected_transfers[]` with `mint`, `recipient_owner`, `min_amount`,
+  `direction` (`in` / `out`)
+- `deadline_unix` (optional)
+
+Evidence: `version`, `profile_id`, `tx_signature` (base58 Solana
+signature), `asserted_transfers[]`, `submitted_at`, `payment_uid`
+(echoed), `buyer_nonce` (echoed).
+
+### `x402/oracles/file-delivery/attestation/v1`
+- `expected_size_bytes_min` / `expected_size_bytes_max` (u64)
+- `expected_mime` (optional)
+- `expected_extension` (optional)
+- `attestor_pubkey` (optional, reserves the slot for future
+  signed-delivery profile)
+
+Evidence is the file bytes themselves (uploaded via `POST
+/v1/registry/blob`). The oracle re-hashes on read and verifies size +
+MIME. Wave B `payment_uid` / `buyer_nonce` echoing is via the SLA only
+in v1; a future signed-delivery profile (Wave C) will add a companion
+JSON for evidence-side echoing.
+
+---
+
+## 5. Trust boundaries
+
+What each role must trust, and what is content-addressed (no trust):
+
+| Anchor | Trust required? | Why |
+|---|---|---|
+| `Payment.sla_hash` (on-chain) | None | The chain is the ground truth. |
+| `Payment.delivery_hash` (on-chain) | None | Same. |
+| `Payment.resolution_hash` (on-chain) | None — but verifiable | Anyone with SLA + evidence bytes can recompute and detect a lying oracle. |
+| Registry `GET /v1/registry/<hash>` | None | Re-hashed on read; mismatch returns `500`. |
+| Registry `POST /v1/registry/sla` | Seller's bearer token | Only authenticated sellers may upload; the bytes themselves are still content-addressed. |
+| `oracle_authority` choice | Trust the oracle | The buyer chose this oracle; if it lies, the on-chain `resolution_hash` lets a third party prove it. Recourse is operator reputation, not the chain. |
+| pr402's `slaHash` field | Trust pr402 | pr402 only relays; it doesn't author SLA bytes. The on-chain `Payment.sla_hash` is the buyer's own commitment via signing. |
+
+The protocol's only single-point-of-trust is the chosen oracle. Wave A's
+cross-payment replay protection (tx-signature uniqueness, delivery-hash
+uniqueness) shifts power back to "anyone can detect a faulty oracle";
+Wave B's `buyer_nonce` shifts power back to "no two buyers can be
+attacked with the same SLA template."
+
+---
+
+## 6. Failure modes
+
+| Failure | Detected by | When | Recovery |
+|---|---|---|---|
+| Buyer authors SLA, never sends to seller | nobody | n/a | No payment was made — nothing to recover. |
+| Seller uploads SLA bytes that differ from buyer's | buyer | After hash returned by registry mismatches local hash. | Buyer aborts before signing FundPayment. |
+| Buyer signs FundPayment, never gets delivery | buyer | After `expires_at` | `RefundPayment` returns escrow to buyer. |
+| Seller submits stale evidence (taken before payment) | oracle | At evaluation; rejects with freshness code (Wave A §1.1). | `RefundPayment` after `expires_at` (or anyone calls Refund after Reject). |
+| Seller reuses one tx for two payments (`onchain-transfer`) | oracle | At evaluation of the second payment; rejects with `TRANSFER_TX_SIGNATURE_REUSED` (265). | `RefundPayment` after `expires_at`. |
+| Seller reuses one blob for two payments (`file-delivery`) | oracle | At evaluation of the second payment; rejects with `BLOB_DELIVERY_HASH_REUSED` (325). | Same. |
+| Oracle goes offline | buyer | Delivery sits without verdict; `expires_at` passes. | `RefundPayment`. (Wave A §3.2: pr402's optional health gate refuses to bind to oracles known-offline at build time.) |
+| Oracle returns wrong verdict | third-party auditor | Recompute `resolution_hash` from SLA + evidence + verdict envelope; compare to on-chain. | Off-chain dispute via operator reputation. The protocol does not currently support on-chain dispute. |
+| pr402 returns a tampered `slaHash` | buyer | Buyer hashes locally; mismatch with what they hand to seller. | Buyer aborts. |
+| Buyer tries to fund with wrong oracle | pr402 | At build time: `oracleAuthority` not in `accepted.extra.oracleAuthorities[]` → 400. | Buyer fixes their request. |
+| Wave A.5 health gate ON, oracle unhealthy | pr402 | At build time: returns 503 `oracle_unhealthy`. | Buyer retries against another profile in `oracleProfiles[]`. |
+
+---
+
+## 7. Versioning
+
+The protocol's identity is the `profile_id`:
+`x402/oracles/<family>/<profile>/<version>`.
+
+**Profile bumps** (`v1` → `v2`):
+- Required when the SLA or evidence wire shape changes in a way that
+  breaks old evaluators (e.g. adding a required field that v1
+  evaluators wouldn't compute).
+- Wave-A and Wave-B fields were a *one-time* shape change because the
+  ecosystem had no production sellers yet. Future required-field
+  additions WILL bump the version.
+- Each version has its own `NORMATIVE.md` and is registered as a
+  separate profile in pr402.
+
+**Wave bumps** (`Wave A` / `Wave B` markers in code comments):
+- Internal milestones for the security-hardening waves; they do NOT
+  appear in `profile_id`. Older clients reading newer SLA bytes simply
+  see fields they don't recognize (`#[serde(default)]`).
+- Wave-A fields (`payment.created_at`, `delivery_cutoff_seconds`,
+  `oracle_evidence_keys`) are populated by the chain monitor and worker;
+  no SLA shape change.
+- Wave-B fields (`payment_uid`, `buyer_nonce`) DO appear in SLA / Evidence
+  shapes and were a breaking change pre-production; they're now part of
+  v1.
+
+**Protocol version** (top of this doc):
+- Bumps when the cross-actor flow itself changes (e.g. adding a new
+  phase or moving who authors what). Independent from any code version.
+- Wave-A internal hardening did not require a protocol bump.
+- Wave-B (buyer-authors-SLA) shifted authorship from seller to buyer; the
+  protocol version is `1.0`.
+
+---
+
+## 8. Quick sequence reference
+
+```
+Phase   Buyer                       Seller                 Oracle             Chain (sla-escrow)
+─────   ─────                       ──────                 ──────             ─────────────────
+  1     read 402 + capabilities   ←  publishes 402         (idle)             (idle)
+        pick (profile, oracle)
+  2     gen payment_uid + nonce
+        author sla.json
+        sla_hash = SHA256(bytes)
+
+  3     hand bytes ───────────────▶ POST /v1/registry/sla ─────────────────▶
+                                    (registry stores; returns hash)
+        verify hash ← ←  ← seller hands hash + url back ←
+  4     POST build-sla-escrow…
+        (pr402 → unsigned tx)
+        sign + submit ────────────────────────────────────────────────────▶ FundPayment
+                                                                              Payment.sla_hash
+                                                                              Payment.created_at
+                                                                              state=Funded
+
+  5                                 GET /v1/registry/<sla_hash>
+                                    (read payment_uid + nonce)
+                                    do the work
+                                    POST /v1/registry/delivery ───────────▶
+                                                                  delivery_hash returned
+  6                                 sla-escrow submit-delivery ───────────▶ SubmitDelivery
+                                                                              Payment.delivery_hash
+                                                                              event emitted
+  7                                                        observes event
+                                                           GET sla + delivery
+                                                           verifies binding
+                                                           runs evaluator
+                                                           ConfirmOracle ──▶ Payment.resolution_*
+                                                                              state still Funded
+                                                                              event emitted
+  8     observe event              observe event
+        if approved → ReleasePayment (anyone may call) ──────────────────▶ tokens → seller
+        if rejected → RefundPayment (anyone may call) ───────────────────▶ tokens → buyer
+        if expired without verdict → RefundPayment ─────────────────────▶ tokens → buyer
+```
+
+The on-chain anchor is `Payment.sla_hash`. Everything else is
+content-addressed and verifiable by anyone, anytime.
+
+---
+
+## 9. Related documents
+
+- [`SELLER_GUIDE.md`](./SELLER_GUIDE.md) — concrete shell recipes per
+  profile, registration flow, common pitfalls.
+- [`BUYER_GUIDE.md`](./BUYER_GUIDE.md) — buyer-side shell recipes,
+  oracle-selection guidance.
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — operator runbook for oracle
+  bring-up.
+- [`OPERATIONS.md`](./OPERATIONS.md) — day-2 oracle ops.
+- Each profile's `NORMATIVE.md` — per-profile rules, field definitions,
+  resolution-reason codes.
+- pr402's `agent-integration.md` (served at the deployed facilitator)
+  — pr402-side details for buyers calling the build / verify / settle
+  endpoints.
+- Hub `design.md` (`.kiro/specs/multi-category-oracle-architecture/design.md`)
+  — internal traits, properties, and rationale; for implementers, not
+  integrators.
+
+---
+
+## Changelog
+
+- **1.0** (Wave A + B baseline): initial publication. Buyer-authored
+  SLA with mandatory `payment_uid`, optional `buyer_nonce`. Cross-payment
+  replay protection (Wave A §1.3 / §2.2.1). Freshness lower bound
+  (Wave A §1.1). pr402 health gate (Wave A §3.2, opt-in).

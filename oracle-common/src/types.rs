@@ -26,6 +26,20 @@ pub struct EvaluationJob {
     pub mint: Pubkey,
     pub oracle_authority: Pubkey,
     pub expires_at: i64,
+    /// On-chain `Payment.created_at` — the moment the buyer funded the escrow. Used by
+    /// evaluators to enforce the freshness lower bound on evidence (no pre-funding
+    /// evidence). Default `0` means "unbound" (back-compat for older tests / paths
+    /// that don't populate it); when `> 0`, evaluators MAY enforce
+    /// `evidence.timestamp >= created_at` to defeat replay of stale evidence.
+    /// Wave A §1.1.
+    pub created_at: i64,
+    /// On-chain `Payment.delivery_cutoff_seconds` — the lead time before
+    /// `expires_at` within which the seller must submit delivery (so the oracle has
+    /// at least this much time to evaluate). The on-chain `submit_delivery`
+    /// instruction already enforces this on the seller; the evaluator carries it for
+    /// diagnostic checks (`evidence.timestamp <= expires_at - delivery_cutoff_seconds`).
+    /// Default `0` = unbound. Wave A §1.1.
+    pub delivery_cutoff_seconds: i64,
     /// Raw SLA bytes pre-fetched by the chain monitor; the worker parses them once
     /// (cheap `SlaEnvelope` peek for dispatch, then full parse inside the runner).
     /// `None` when the job came from a path that couldn't fetch (e.g. manual evaluate
@@ -60,6 +74,22 @@ pub struct EvaluationOutcome {
     pub result: EvaluationResult,
     pub resolution_hash: [u8; 32],
     pub signature: Option<String>,
+    /// Wave A §1.3 / §2.2.1 — evidence keys this evaluation consumed
+    /// (e.g. `tx_signature` for onchain-transfer, `delivery_hash` for
+    /// file-delivery). The worker records each into `oracle_evidence_keys`
+    /// after a successful approve so future evaluations of *other* payments
+    /// can refuse cross-payment reuse. Empty for evaluators that don't need
+    /// cross-payment replay protection.
+    pub evidence_keys: Vec<EvidenceKey>,
+}
+
+/// A single (kind, value) pair to insert into `oracle_evidence_keys` after
+/// settlement. `kind` is a free-form discriminator chosen by the evaluator
+/// (e.g. `"tx_signature"`, `"delivery_hash"`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvidenceKey {
+    pub kind: String,
+    pub value: String,
 }
 
 /// Live runtime health gauges, surfaced via `GET /health` and `GET /metrics`.
@@ -102,6 +132,8 @@ mod tests {
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
             expires_at: 1_900_000_000,
+            created_at: 0,
+            delivery_cutoff_seconds: 0,
             sla_bytes: Some(Bytes::from_static(b"hello")),
         };
         let cloned = job.clone();

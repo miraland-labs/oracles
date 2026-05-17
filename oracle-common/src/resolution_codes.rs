@@ -22,6 +22,22 @@ pub mod onchain_transfer {
     pub const TRANSFER_CLUSTER_MISMATCH: u16 = 261;
     pub const TRANSFER_RECIPIENT_NOT_RESOLVABLE: u16 = 262;
     pub const TRANSFER_DIRECTION_MISMATCH: u16 = 263;
+    /// Wave A §1.1 — observed `block_time` predates `Payment.created_at`,
+    /// indicating the seller is replaying a transfer that happened before the
+    /// buyer funded the escrow. Reject with this code.
+    pub const TRANSFER_EVIDENCE_PREDATES_PAYMENT: u16 = 264;
+    /// Wave A §2.2.1 — same `tx_signature` was already settled for a different
+    /// `payment_uid` on this oracle's ledger. Cross-payment replay refusal.
+    pub const TRANSFER_TX_SIGNATURE_REUSED: u16 = 265;
+    /// Wave B §1.2 — evidence's `payment_uid` does not match the on-chain
+    /// `Payment.payment_uid` this evaluation is bound to. Hard refusal.
+    pub const TRANSFER_PAYMENT_UID_MISMATCH: u16 = 266;
+    /// Wave B §1.4 — SLA carries a `buyer_nonce` and the evidence didn't echo
+    /// it back. Refusal.
+    pub const TRANSFER_BUYER_NONCE_MISMATCH: u16 = 267;
+    /// Wave A §2.2.2 — `block_time` is missing from RPC metadata and the
+    /// evaluator is in strict-mandatory-blocktime mode.
+    pub const TRANSFER_BLOCK_TIME_MISSING: u16 = 268;
 
     pub const RANGE: std::ops::RangeInclusive<u16> = 256..=319;
 }
@@ -32,6 +48,18 @@ pub mod file_delivery {
     pub const BLOB_MIME_MISMATCH: u16 = 321;
     pub const BLOB_ATTESTOR_SIGNATURE_INVALID: u16 = 322;
     pub const BLOB_UPLOAD_INCOMPLETE: u16 = 323;
+    /// Wave A §1.1 — registry blob `created_at` predates `Payment.created_at`,
+    /// the seller is reusing a pre-funding upload.
+    pub const BLOB_PREDATES_PAYMENT: u16 = 324;
+    /// Wave A §1.3 — same `delivery_hash` (blob) already settled for a
+    /// different `payment_uid`. Cross-payment replay refusal.
+    pub const BLOB_DELIVERY_HASH_REUSED: u16 = 325;
+    /// Wave B §1.2 — companion-evidence's `payment_uid` does not match the
+    /// on-chain `Payment.payment_uid`.
+    pub const BLOB_PAYMENT_UID_MISMATCH: u16 = 326;
+    /// Wave B §1.4 — SLA carries a `buyer_nonce` and the evidence didn't echo
+    /// it back.
+    pub const BLOB_BUYER_NONCE_MISMATCH: u16 = 327;
 
     pub const RANGE: std::ops::RangeInclusive<u16> = 320..=383;
 }
@@ -72,6 +100,11 @@ mod tests {
             onchain_transfer::TRANSFER_CLUSTER_MISMATCH,
             onchain_transfer::TRANSFER_RECIPIENT_NOT_RESOLVABLE,
             onchain_transfer::TRANSFER_DIRECTION_MISMATCH,
+            onchain_transfer::TRANSFER_EVIDENCE_PREDATES_PAYMENT,
+            onchain_transfer::TRANSFER_TX_SIGNATURE_REUSED,
+            onchain_transfer::TRANSFER_PAYMENT_UID_MISMATCH,
+            onchain_transfer::TRANSFER_BUYER_NONCE_MISMATCH,
+            onchain_transfer::TRANSFER_BLOCK_TIME_MISSING,
         ] {
             assert!(onchain_transfer::RANGE.contains(&code));
         }
@@ -81,6 +114,10 @@ mod tests {
             file_delivery::BLOB_MIME_MISMATCH,
             file_delivery::BLOB_ATTESTOR_SIGNATURE_INVALID,
             file_delivery::BLOB_UPLOAD_INCOMPLETE,
+            file_delivery::BLOB_PREDATES_PAYMENT,
+            file_delivery::BLOB_DELIVERY_HASH_REUSED,
+            file_delivery::BLOB_PAYMENT_UID_MISMATCH,
+            file_delivery::BLOB_BUYER_NONCE_MISMATCH,
         ] {
             assert!(file_delivery::RANGE.contains(&code));
         }

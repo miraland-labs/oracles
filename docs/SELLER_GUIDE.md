@@ -12,6 +12,11 @@ you through the three things you actually need to do, in plain language.
 If you've done HTTP-402 + `pr402` once before, this is just two extra HTTP
 calls and one on-chain `submit_delivery`.
 
+> **First time integrating?** Read [`SLA_ESCROW_PROTOCOL.md`](./SLA_ESCROW_PROTOCOL.md)
+> first — that's the cross-actor reference that shows how buyer, seller,
+> oracle, and pr402 fit together. This guide gives you the seller's
+> recipes; the protocol doc gives you the big picture.
+
 ---
 
 ## 1. Pick your delivery scenario
@@ -109,58 +114,96 @@ The oracle stores only `SHA256(token)`. Lose the token, run
 
 ## 4. The full happy path — one shell script per scenario
 
+> **Who authors the SLA bytes?** **The buyer**, not the seller. The buyer
+> bakes a fresh per-payment `payment_uid` (and an optional `buyer_nonce`) into
+> the SLA before hashing it, so each FundPayment is cryptographically tied to
+> exactly one SLA document. The seller's role is *upload mechanic*: the buyer
+> hands you the final SLA bytes, you `POST /v1/registry/sla` with your bearer
+> token, and the registry returns the hash both sides verify locally.
+>
+> When the buyer wants extra protection (defends against cross-SLA replay
+> when two buyers happen to produce identical SLA terms), they include a
+> `buyer_nonce` (32 random bytes, hex). The on-chain `sla_hash` commits to
+> the nonce by hash, the registry stores the bytes content-addressed, and you
+> simply echo `payment_uid` (and `buyer_nonce` when present) verbatim in
+> `delivery.json` after re-fetching the SLA back via
+> `GET /v1/registry/<sla_hash>`.
+>
+> Practical effect for the recipes below: every flow now starts with
+> `SLA_BYTES=$(curl https://oracle.example.com/v1/registry/$SLA_HASH)` so you
+> read the bytes the buyer authored, instead of writing them yourself.
+
 ### 4.A. JSON API quality (the most common case)
 
 ```bash
 ORACLE="https://oracle-api.example.com"
 TOKEN="$SELLER_TOKEN"
 
-# Author your SLA: what you promise.
-cat > sla.json <<'EOF'
-{
-  "version": 1,
-  "profile_id": "x402/oracles/api-quality/v1",
-  "endpoint": "https://my-api.example.com/v1/inference",
-  "method": "POST",
-  "min_status_code": 200,
-  "max_status_code": 299,
-  "max_latency_ms": 5000,
-  "required_fields": ["result"]
-}
-EOF
+# 1. Buyer authors and signs the SLA off-band:
+#       (a) calls pr402 to obtain a payment_uid for this funding,
+#       (b) generates a 32-byte buyer_nonce (optional, recommended),
+#       (c) writes the JSON below using your published terms,
+#       (d) computes sla_hash = SHA256(bytes) locally,
+#       (e) hands the bytes to you (HTTP, IM, S3, anywhere — the bytes are
+#           public information once funded; only the order matters).
+#
+# Buyer-authored sla.json that you receive:
+# {
+#   "version": 1,
+#   "profile_id": "x402/oracles/api-quality/v1",
+#   "payment_uid": "<64-hex-payment_uid>",
+#   "buyer_nonce": "<64-hex-32-byte-nonce-or-omitted>",
+#   "endpoint": "https://my-api.example.com/v1/inference",
+#   "method": "POST",
+#   "min_status_code": 200,
+#   "max_status_code": 299,
+#   "max_latency_ms": 5000,
+#   "required_fields": ["result"]
+# }
 
-# 1. Upload SLA → registry returns sha256.
+# 2. Upload SLA → registry returns sha256. Buyer verifies the returned hash
+#    matches their local hash before signing FundPayment.
 SLA_HASH=$(curl -fsS -X POST "$ORACLE/v1/registry/sla" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     --data-binary @sla.json | jq -r .sha256)
 
-echo "Upload SLA: $SLA_HASH"
+echo "Registered SLA: $SLA_HASH"
 
-# 2. Buyer funds the escrow with sla_hash + your oracle authority.
-#    (You don't do this step — the buyer does, via pr402's
-#    /build-sla-escrow-payment-tx.)
+# 3. Buyer signs FundPayment on-chain (sla_hash + payment_uid + your oracle
+#    authority). pr402.build-sla-escrow-payment-tx packages it.
 
-# 3. After your service produces the response, capture the evidence.
-cat > delivery.json <<'EOF'
+# 4. Buyer's request lands on your service. Run the work.
+
+# 5. Re-fetch the SLA from the registry to read payment_uid + buyer_nonce.
+#    The registry is content-addressed and re-hashes on read, so this is
+#    safe to trust.
+SLA=$(curl -fsS "$ORACLE/v1/registry/$SLA_HASH")
+PAYMENT_UID=$(echo "$SLA" | jq -r .payment_uid)
+BUYER_NONCE=$(echo "$SLA" | jq -r '.buyer_nonce // empty')
+
+# 6. Capture evidence; echo payment_uid (and buyer_nonce when present) verbatim.
+cat > delivery.json <<EOF
 {
   "status_code": 200,
   "latency_ms": 240,
   "response_body": {"result": "..."},
   "response_headers": {"content-type": "application/json"},
-  "timestamp": 1770000000
+  "timestamp": $(date +%s),
+  "payment_uid": "$PAYMENT_UID"$([ -n "$BUYER_NONCE" ] && echo ",
+  \"buyer_nonce\": \"$BUYER_NONCE\"")
 }
 EOF
 
-# 4. Upload the delivery → registry returns sha256.
+# 7. Upload the delivery → registry returns sha256.
 DELIVERY_HASH=$(curl -fsS -X POST "$ORACLE/v1/registry/delivery" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     --data-binary @delivery.json | jq -r .sha256)
 
-echo "Upload delivery: $DELIVERY_HASH"
+echo "Registered delivery: $DELIVERY_HASH"
 
-# 5. Submit delivery on-chain (the only on-chain action you take).
+# 8. Submit delivery on-chain (the only on-chain action you take).
 sla-escrow submit-delivery \
     --seller /path/to/seller-keypair.json \
     --payment-uid "$PAYMENT_UID" \
@@ -180,30 +223,38 @@ evidence is the transaction signature.
 ORACLE="https://oracle-transfer.example.com"
 TOKEN="$SELLER_TOKEN"
 
-# 1. Author the SLA: which mint, which recipient, how many tokens.
-cat > sla.json <<'EOF'
-{
-  "version": 1,
-  "profile_id": "x402/oracles/onchain-transfer/v1",
-  "cluster": "mainnet",
-  "expected_transfers": [{
-    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "recipient_owner": "BUYER_WALLET_PUBKEY",
-    "min_amount": "1000000",
-    "direction": "in"
-  }]
-}
-EOF
+# 1. Buyer authors and uploads the SLA bytes off-band (same flow as 4.A:
+#    buyer obtains payment_uid from pr402, generates buyer_nonce, hands
+#    sla.json to you). The buyer-authored SLA looks like:
+# {
+#   "version": 1,
+#   "profile_id": "x402/oracles/onchain-transfer/v1",
+#   "payment_uid": "<64-hex-payment_uid>",
+#   "buyer_nonce": "<64-hex-32-byte-nonce-or-omitted>",
+#   "cluster": "mainnet",
+#   "expected_transfers": [{
+#     "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+#     "recipient_owner": "BUYER_WALLET_PUBKEY",
+#     "min_amount": "1000000",
+#     "direction": "in"
+#   }]
+# }
 
 SLA_HASH=$(curl -fsS -X POST "$ORACLE/v1/registry/sla" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     --data-binary @sla.json | jq -r .sha256)
 
-# 2. Broadcast the actual transfer — solana-cli, your wallet, whatever.
+# 2. Re-fetch SLA to read the buyer's payment_uid and buyer_nonce.
+SLA=$(curl -fsS "$ORACLE/v1/registry/$SLA_HASH")
+PAYMENT_UID=$(echo "$SLA" | jq -r .payment_uid)
+BUYER_NONCE=$(echo "$SLA" | jq -r '.buyer_nonce // empty')
+
+# 3. Broadcast the actual transfer — solana-cli, your wallet, whatever.
 TX_SIG="$(spl-token transfer ... --output json | jq -r .signature)"
 
-# 3. Author the evidence pointing at the tx.
+# 4. Author the evidence pointing at the tx. Echo payment_uid (and
+#    buyer_nonce if present) verbatim.
 cat > delivery.json <<EOF
 {
   "version": 1,
@@ -214,7 +265,9 @@ cat > delivery.json <<EOF
     "recipient_owner": "BUYER_WALLET_PUBKEY",
     "claimed_delta": "1000000"
   }],
-  "submitted_at": $(date +%s)
+  "submitted_at": $(date +%s),
+  "payment_uid": "$PAYMENT_UID"$([ -n "$BUYER_NONCE" ] && echo ",
+  \"buyer_nonce\": \"$BUYER_NONCE\"")
 }
 EOF
 
@@ -244,16 +297,23 @@ streams it from the registry and verifies the SHA-256 chunk-by-chunk.
 ORACLE="https://oracle-file.example.com"
 TOKEN="$SELLER_TOKEN"
 
-# 1. Author the SLA: size bounds + optional MIME.
-cat > sla.json <<'EOF'
-{
-  "version": 1,
-  "profile_id": "x402/oracles/file-delivery/attestation/v1",
-  "expected_size_bytes_min": 5242880,
-  "expected_size_bytes_max": 524288000,
-  "expected_mime": "video/mp4"
-}
-EOF
+# 1. Buyer authors and uploads the SLA bytes off-band (size bounds + MIME +
+#    payment_uid + optional buyer_nonce). You receive sla.json from the buyer:
+# {
+#   "version": 1,
+#   "profile_id": "x402/oracles/file-delivery/attestation/v1",
+#   "payment_uid": "<64-hex-payment_uid>",
+#   "buyer_nonce": "<64-hex-32-byte-nonce-or-omitted>",
+#   "expected_size_bytes_min": 5242880,
+#   "expected_size_bytes_max": 524288000,
+#   "expected_mime": "video/mp4"
+# }
+#
+# Note: file-delivery's evidence is the streamed *file itself*, not a JSON
+# envelope, so payment_uid / buyer_nonce binding for v1 lives in the SLA only.
+# The on-chain sla_hash already commits the SLA bytes (and the nonce by hash).
+# A future signed-delivery profile (Wave C) will add a companion JSON for
+# evidence-side echoing.
 
 SLA_HASH=$(curl -fsS -X POST "$ORACLE/v1/registry/sla" \
     -H "Authorization: Bearer $TOKEN" \

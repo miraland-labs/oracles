@@ -11,6 +11,13 @@ pub struct TransferEvidence {
     pub tx_signature: String,
     pub asserted_transfers: Vec<AssertedTransfer>,
     pub submitted_at: i64,
+    /// REQUIRED (Wave B §1.2). Hex-encoded 32-byte `payment_uid` the seller is
+    /// claiming this transfer was for. The evaluator refuses evidence whose
+    /// `payment_uid` does not match `job.payment_uid`.
+    pub payment_uid: String,
+    /// OPTIONAL (Wave B §1.4). Echo of the SLA's `buyer_nonce` when set.
+    #[serde(default)]
+    pub buyer_nonce: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

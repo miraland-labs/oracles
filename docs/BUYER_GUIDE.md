@@ -11,10 +11,21 @@ fund the escrow.
 > (or accept the seller's default), pass its `operatorPubkey` as
 > `oracle_authority` when funding the escrow, and the chosen oracle
 > decides the verdict. That's it.
+>
+> One nuance for trust: **you author the SLA bytes**, not the seller.
+> Bake `payment_uid` and (recommended) `buyer_nonce` into the SLA JSON
+> before hashing, so each FundPayment is tied to exactly one SLA. The
+> seller fetches your bytes back from the oracle's content-addressed
+> registry and echoes both fields in evidence; the oracle compares.
+> §3 walks through the exact shape.
 
 If you've used `pr402` for the `exact` rail, you already know the
 mechanics. SLA-escrow adds **two extra fields** to the build call:
 `slaHash` and `oracleAuthority`.
+
+> **First time integrating?** Read [`SLA_ESCROW_PROTOCOL.md`](./SLA_ESCROW_PROTOCOL.md)
+> for the four-actor flow (buyer / seller / oracle / pr402). This guide
+> gives you the buyer's recipes; the protocol doc gives you the big picture.
 
 ---
 
@@ -98,12 +109,63 @@ move on.
 This is the only on-chain action you take. Two HTTP calls plus one
 signature.
 
+> **You author the SLA bytes.** The seller publishes their *terms* (in
+> `accepts[].extra` and any reference docs), but the SLA document that
+> goes on-chain is *yours*. Two fields in particular are buyer-controlled
+> and bind this payment uniquely to its SLA:
+>
+> - **`payment_uid`** (required, 64 hex). Bake this in *before* hashing.
+>   pr402 returns it on `/build-sla-escrow-payment-tx`; you can also pass
+>   one in. Defends against the seller submitting evidence taken for
+>   another payment against this one.
+> - **`buyer_nonce`** (optional, 64 hex, 32 random bytes). When two
+>   different payments use identical SLA terms, the nonce gives them
+>   distinct hashes, so a seller can't replay one's evidence against the
+>   other. Generate a fresh one per payment with `openssl rand -hex 32`.
+>
+> The seller fetches your SLA bytes back from the oracle's content-
+> addressed registry (`GET /v1/registry/<sla_hash>`) and echoes both
+> fields in their evidence. The oracle re-fetches both, compares, rejects
+> on mismatch.
+
 ```bash
 PR402="https://ipay.sh"   # or your trusted facilitator
 BUYER_PUBKEY="<your-wallet>"
 ACCEPTED='<the JSON object from accepts[0]>'        # paste verbatim
 RESOURCE='<the JSON value of "resource">'           # paste verbatim
+
+# 0. Decide on the SLA. Get a payment_uid first (pr402 will use it later
+#    if you pass it in; otherwise pr402 generates and returns one in the
+#    build response — but then you'd have to author the SLA after the
+#    build, hash it, then re-call build with the hash, an extra round-trip).
+PAYMENT_UID="$(openssl rand -hex 32)"          # 64 hex chars
+BUYER_NONCE="$(openssl rand -hex 32)"          # optional but recommended
+
+# Author the SLA using the seller's terms + your two fields. The exact
+# shape varies per profile (see SELLER_GUIDE.md or the profile's
+# NORMATIVE.md). For api-quality:
+cat > sla.json <<EOF
+{
+  "version": 1,
+  "profile_id": "x402/oracles/api-quality/v1",
+  "payment_uid": "$PAYMENT_UID",
+  "buyer_nonce": "$BUYER_NONCE",
+  "endpoint": "https://seller.example.com/v1/inference",
+  "method": "POST",
+  "min_status_code": 200,
+  "max_status_code": 299,
+  "max_latency_ms": 5000,
+  "required_fields": ["result"]
+}
+EOF
+
+# Hash locally — this is what goes on-chain.
 SLA_HASH="$(shasum -a 256 sla.json | awk '{print $1}')"
+
+# Hand sla.json to the seller (any out-of-band channel). Seller uploads to
+# the oracle registry with their bearer token; the registry returns the
+# hash. Confirm it matches your local SLA_HASH before signing FundPayment.
+
 ORACLE_AUTHORITY="$(echo "$ACCEPTED" | jq -r .extra.oracleProfiles[0].operatorPubkey)"
 
 # 1. Ask pr402 to build the unsigned FundPayment transaction.
@@ -113,7 +175,8 @@ BUILD_BODY=$(jq -n \
   --argjson resource "$RESOURCE" \
   --arg slaHash "$SLA_HASH" \
   --arg oracleAuthority "$ORACLE_AUTHORITY" \
-  '{payer:$payer, accepted:$accepted, resource:$resource, slaHash:$slaHash, oracleAuthority:$oracleAuthority}')
+  --arg paymentUid "$PAYMENT_UID" \
+  '{payer:$payer, accepted:$accepted, resource:$resource, slaHash:$slaHash, oracleAuthority:$oracleAuthority, paymentUid:$paymentUid}')
 
 UNSIGNED=$(curl -fsS -X POST "$PR402/api/v1/facilitator/build-sla-escrow-payment-tx" \
     -H "Content-Type: application/json" \
