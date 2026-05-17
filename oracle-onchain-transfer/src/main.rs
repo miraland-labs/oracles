@@ -156,6 +156,23 @@ async fn main() -> anyhow::Result<()> {
         max_bytea_bytes: config.registry_max_bytea_bytes,
         max_blob_bytes: config.registry_max_blob_bytes,
         registered_profile_id: PROFILE_ID,
+        oracle_pubkey: config.oracle_pubkey().to_string(),
+        normative_spec_url: Some(
+            "https://github.com/miraland-labs/oracles/blob/main/\
+             oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md"
+                .into(),
+        ),
+        // Pinned cluster so sellers / buyers / pr402 can sanity-check before
+        // funding (otherwise a Devnet-vs-Mainnet mismatch surfaces only as
+        // a wasted on-chain settlement with `Custom(258) ClusterMismatch`).
+        cluster: Some(
+            match cluster {
+                TransferCluster::MainnetBeta => "mainnet-beta",
+                TransferCluster::Devnet => "devnet",
+                TransferCluster::Testnet => "testnet",
+            }
+            .to_string(),
+        ),
     };
     let app =
         create_core_router(state.clone()).nest("/v1/registry", registry_router(registry_state));

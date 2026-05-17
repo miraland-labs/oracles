@@ -430,7 +430,7 @@ bytes plus the `oracle_jobs` row can independently verify the verdict:
    `oracle-*/spec/*/NORMATIVE.md` is normative for v1; identical inputs
    must produce an identical `approved` + `resolution_reason`).
 4. Recompute `compute_resolution_hash(...)` using the canonical
-   `x402/oracle/resolution-envelope/v1` recipe documented in
+   `x402/oracles/resolution-envelope/v1` recipe documented in
    [`design.md`](../../.kiro/specs/multi-category-oracle-architecture/design.md);
    confirm it equals `verdict.resolution_hash`.
 

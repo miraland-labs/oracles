@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "profile_id": "x402/oracle/onchain-transfer/v1",
+  "profile_id": "x402/oracles/onchain-transfer/v1",
   "cluster": "devnet",
   "expected_transfers": [
     {

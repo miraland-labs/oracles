@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "profile_id": "x402/oracle/onchain-transfer/v1",
+  "profile_id": "x402/oracles/onchain-transfer/v1",
   "tx_signature": "5J7XZmPQ8KvNhGfWnLpZyR3TbVu4Cw9XaeGq8Bj2Lk7Hd6Yp1Mn3sTkV4cZxF8eRgN1mB5oJyW",
   "asserted_transfers": [
     {

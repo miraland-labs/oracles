@@ -1,6 +1,6 @@
 # On-Chain Transfer Profile — Version 1 (Normative)
 
-**Profile identifier:** `x402/oracle/onchain-transfer/v1`
+**Profile identifier:** `x402/oracles/onchain-transfer/v1`
 **Document status:** Normative specification for the `oracle-onchain-transfer`
 reference implementation.
 **Scope:** Off-chain SLA documents and delivery evidence for **SPL token
@@ -32,7 +32,7 @@ proof of delivery is the Solana transaction itself. This profile binds:
 * `delivery_hash` to the seller's evidence JSON, which carries the
   `tx_signature` and the seller's claimed deltas.
 * `resolution_hash` to the canonical
-  `x402/oracle/resolution-envelope/v1` digest computed over the verdict.
+  `x402/oracles/resolution-envelope/v1` digest computed over the verdict.
 
 The oracle verifies the SLA against the actual on-chain pre/post balances; the
 seller's `claimed_delta` is informational only.
@@ -52,12 +52,12 @@ This document is **normative** for verdicts produced by
 | **Cluster**              | Solana cluster (`mainnet-beta`, `devnet`, `testnet`). The oracle's RPC MUST point at the same cluster the SLA names; mismatch is a hard reject.           |
 | **Pre/post balance**     | The Solana RPC `getTransaction(jsonParsed)` response's `meta.preTokenBalances` / `meta.postTokenBalances` entries.                                        |
 | **Direction**            | `"in"` (recipient gains tokens) or `"out"` (recipient loses tokens). Sign of `delta = post - pre` is checked against this.                                |
-| **Profile**              | A versioned rule family (`x402/oracle/onchain-transfer/v1`).                                                                                                     |
+| **Profile**              | A versioned rule family (`x402/oracles/onchain-transfer/v1`).                                                                                                     |
 
 
 ### 2.1 Trust model
 
-`x402/oracle/onchain-transfer/v1` is **cryptographically strong on the "transfer
+`x402/oracles/onchain-transfer/v1` is **cryptographically strong on the "transfer
 happened" axis**. The oracle reads the Solana RPC directly and re-derives
 balance deltas from the same `getTransaction` response any auditor can fetch.
 Specifically, it proves:
@@ -109,7 +109,7 @@ The SLA document MUST validate against
 | Field                                        | Type                | Required | Notes                                                                                                                       |
 | -------------------------------------------- | ------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `version`                                    | `u32`               | yes      | MUST be `1`.                                                                                                                |
-| `profile_id`                                 | `string`            | yes      | MUST be `x402/oracle/onchain-transfer/v1`.                                                                                         |
+| `profile_id`                                 | `string`            | yes      | MUST be `x402/oracles/onchain-transfer/v1`.                                                                                         |
 | `cluster`                                    | enum                | yes      | One of `mainnet-beta`, `devnet`, `testnet`. Mismatch with the binary's configured cluster is a hard reject (`Custom(261)`). |
 | `expected_transfers`                         | `array`             | yes      | Non-empty; each element specifies one `(mint, recipient_owner, min_amount, direction)` constraint.                          |
 | `expected_transfers[].mint`                  | base58 `string`     | yes      | SPL mint pubkey.                                                                                                            |
@@ -136,7 +136,7 @@ The delivery evidence MUST validate against
 | Field                                        | Type             | Required | Notes                                                                                              |
 | -------------------------------------------- | ---------------- | -------- | -------------------------------------------------------------------------------------------------- |
 | `version`                                    | `u32`            | yes      | MUST be `1`.                                                                                       |
-| `profile_id`                                 | `string`         | yes      | MUST be `x402/oracle/onchain-transfer/v1`.                                                                |
+| `profile_id`                                 | `string`         | yes      | MUST be `x402/oracles/onchain-transfer/v1`.                                                                |
 | `tx_signature`                               | base58 `string`  | yes      | Solana transaction signature of the transfer/swap that fulfilled the SLA.                          |
 | `asserted_transfers`                         | `array`          | yes      | Seller's claim of `(mint, recipient_owner, claimed_delta)`. Informational only — oracle re-derives. |
 | `submitted_at`                               | `i64`            | yes      | Unix epoch seconds when evidence was recorded (audit metadata).                                    |
@@ -177,7 +177,7 @@ the first failing entry's reason wins.
 
 ## 7. Resolution-hash details
 
-The `details` slot of the canonical `x402/oracle/resolution-envelope/v1` envelope
+The `details` slot of the canonical `x402/oracles/resolution-envelope/v1` envelope
 carries the verifier's observation:
 
 ```json

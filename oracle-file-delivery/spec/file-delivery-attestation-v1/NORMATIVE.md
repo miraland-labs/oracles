@@ -1,6 +1,6 @@
 # File Delivery Attestation Profile — Version 1 (Normative)
 
-**Profile identifier:** `x402/oracle/file-delivery/attestation/v1`
+**Profile identifier:** `x402/oracles/file-delivery/attestation/v1`
 **Document status:** Normative specification for the `oracle-file-delivery`
 reference implementation.
 **Scope:** Off-chain SLA documents and *blob-bytes* delivery for content
@@ -45,7 +45,7 @@ at profile version `1`.
 
 ### 2.1 Trust model
 
-`x402/oracle/file-delivery/attestation/v1` proves:
+`x402/oracles/file-delivery/attestation/v1` proves:
 
 * The bytes the registry serves hash to the on-chain `delivery_hash` (via
   the streaming fetcher's incremental SHA-256, P-HASH-3).
@@ -79,7 +79,7 @@ on-chain.
 
 * `sla_hash = SHA256(B_sla)` — UTF-8 octets of the SLA JSON.
 * `delivery_hash = SHA256(B_blob)` — **raw blob bytes** (NOT a JSON envelope).
-  This is the key difference from `x402/oracle/api-quality/v1`, which binds
+  This is the key difference from `x402/oracles/api-quality/v1`, which binds
   `delivery_hash` to a JSON evidence document.
 
 The streaming fetcher computes SHA-256 incrementally during the body read and
@@ -101,7 +101,7 @@ The SLA document MUST validate against
 | Field                       | Type                  | Required | Notes                                                                                                                  |
 | --------------------------- | --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `version`                   | `u32`                 | yes      | MUST be `1`.                                                                                                           |
-| `profile_id`                | `string`              | yes      | MUST be `x402/oracle/file-delivery/attestation/v1`.                                                                            |
+| `profile_id`                | `string`              | yes      | MUST be `x402/oracles/file-delivery/attestation/v1`.                                                                            |
 | `expected_size_bytes_min`   | `u64`                 | yes      | Lower bound (inclusive) on raw byte size.                                                                              |
 | `expected_size_bytes_max`   | `u64`                 | yes      | Upper bound (inclusive). Defends against a 1-byte file passing as a video.                                             |
 | `expected_mime`             | `string` (optional)   | no       | If present, sniffed MIME of the leading 512 bytes must match (case-insensitive prefix match against IANA media types). |
@@ -166,7 +166,7 @@ The first failing check determines the rejection reason (P-VER-2).
 
 ## 7. Resolution-hash details
 
-The `details` slot of the canonical `x402/oracle/resolution-envelope/v1` envelope:
+The `details` slot of the canonical `x402/oracles/resolution-envelope/v1` envelope:
 
 ```json
 {

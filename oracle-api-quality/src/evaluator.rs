@@ -1,4 +1,4 @@
-//! `Evaluator` impl for `x402/oracle/api-quality/v1`.
+//! `Evaluator` impl for `x402/oracles/api-quality/v1`.
 //!
 //! Runs the deterministic check battery in fixed order:
 //!

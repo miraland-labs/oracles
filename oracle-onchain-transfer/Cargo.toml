@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "On-chain SPL transfer / swap oracle (x402/oracle/onchain-transfer/v1)"
+description = "On-chain SPL transfer / swap oracle (x402/oracles/onchain-transfer/v1)"
 keywords = ["x402", "oracle", "sla", "spl", "solana"]
 categories = ["web-programming", "cryptography"]
 

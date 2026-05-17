@@ -127,9 +127,9 @@ mod tests {
 
     #[test]
     fn sla_envelope_parses_profile_id_only() {
-        let bytes = br#"{"profile_id":"x402/oracle/api-quality/v1","version":1,"foo":42}"#;
+        let bytes = br#"{"profile_id":"x402/oracles/api-quality/v1","version":1,"foo":42}"#;
         let env: SlaEnvelope = serde_json::from_slice(bytes).unwrap();
-        assert_eq!(env.profile_id, "x402/oracle/api-quality/v1");
+        assert_eq!(env.profile_id, "x402/oracles/api-quality/v1");
     }
 
     #[test]

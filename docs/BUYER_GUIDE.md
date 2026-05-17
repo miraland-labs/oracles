@@ -39,12 +39,12 @@ like:
         "oracleAuthorities": ["OracLe1...", "OracLe2..."],
         "oracleProfiles": [
           {
-            "profileId": "x402/oracle/api-quality/v1",
+            "profileId": "x402/oracles/api-quality/v1",
             "operatorPubkey": "OracLe1...",
             "registry": "https://oracle-api.example.com/v1/registry"
           },
           {
-            "profileId": "x402/oracle/api-quality/v1",
+            "profileId": "x402/oracles/api-quality/v1",
             "operatorPubkey": "OracLe2...",
             "registry": "https://oracle-api.alt.example.com/v1/registry"
           }
@@ -72,9 +72,9 @@ formalized the oracle choice — see [§6](#6-when-the-seller-doesnt-advertise-o
 Use these rules of thumb:
 
 1. **Profile must match the delivery category**. If the resource
-   returns a JSON response, you want `x402/oracle/api-quality/v1`. If the
-   seller is delivering an SPL transfer, `x402/oracle/onchain-transfer/v1`. If
-   it's a large file, `x402/oracle/file-delivery/attestation/v1`. The seller
+   returns a JSON response, you want `x402/oracles/api-quality/v1`. If the
+   seller is delivering an SPL transfer, `x402/oracles/onchain-transfer/v1`. If
+   it's a large file, `x402/oracles/file-delivery/attestation/v1`. The seller
    normally only advertises profiles compatible with what they sell.
 2. **One oracle per payment**. The on-chain `Payment` binds **one**
    `oracle_authority`. Pick before funding; you cannot change later.
@@ -192,7 +192,7 @@ the richer `oracleProfiles[]`. That's fine for a single canonical
 profile — you have to know the profile out-of-band. Defaults to assume:
 
 - If the seller advertises `oracleAuthorities[]` and the resource looks
-  like an HTTP API, assume `x402/oracle/api-quality/v1`.
+  like an HTTP API, assume `x402/oracles/api-quality/v1`.
 - Hit `GET https://<your-pr402>/api/v1/facilitator/capabilities` →
   `slaEscrowOracleProfiles[]` is the deployment's advertised profile list
   for SLA-escrow.
@@ -212,7 +212,7 @@ different hash. Always use the SHA-256 of **the exact bytes the seller
 will upload** (or that the seller's reference SLA file shows). Don't
 re-serialize.
 
-**Profile mismatch.** Seller advertises `x402/oracle/api-quality/v1`, but
+**Profile mismatch.** Seller advertises `x402/oracles/api-quality/v1`, but
 buyer picked an `oracle-onchain-transfer` operator pubkey. The on-chain
 `FundPayment` succeeds but the chosen oracle silently ignores it (it
 won't dispatch a non-matching profile). The escrow stays stuck until

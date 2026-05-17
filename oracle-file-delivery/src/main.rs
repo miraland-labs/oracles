@@ -151,6 +151,13 @@ async fn main() -> anyhow::Result<()> {
         max_bytea_bytes: config.registry_max_bytea_bytes,
         max_blob_bytes: config.registry_max_blob_bytes,
         registered_profile_id: PROFILE_ID,
+        oracle_pubkey: config.oracle_pubkey().to_string(),
+        normative_spec_url: Some(
+            "https://github.com/miraland-labs/oracles/blob/main/\
+             oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md"
+                .into(),
+        ),
+        cluster: None,
     };
     let app =
         create_core_router(state.clone()).nest("/v1/registry", registry_router(registry_state));

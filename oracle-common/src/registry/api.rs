@@ -43,6 +43,19 @@ pub struct RegistryState {
     pub max_bytea_bytes: u64,
     pub max_blob_bytes: u64,
     pub registered_profile_id: &'static str,
+    /// Base58 oracle authority pubkey served by this binary. Used by
+    /// `GET /v1/registry/info` so sellers and operators can read the on-chain
+    /// identity directly without parsing logs.
+    pub oracle_pubkey: String,
+    /// URL of this profile's normative spec (NORMATIVE.md). Optional — the
+    /// binary may omit if its spec is hosted at a non-canonical URL the
+    /// operator does not want to advertise.
+    pub normative_spec_url: Option<String>,
+    /// Cluster this binary serves for cluster-pinned profiles
+    /// (e.g. `oracle-onchain-transfer` with `TRANSFER_CLUSTER`). `None` for
+    /// cluster-agnostic profiles. Sellers/buyers compare against pr402's
+    /// `chainId` to catch cluster mismatches before funding.
+    pub cluster: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -117,6 +130,16 @@ pub struct InfoResponse {
     pub max_bytea_bytes: u64,
     pub max_blob_bytes: u64,
     pub registered_profile_id: &'static str,
+    /// Base58 oracle authority pubkey. Sellers paste this into their
+    /// HTTP-402 `accepts[].extra.oracleProfiles[].operatorPubkey` so buyers
+    /// fund the right `oracle_authority` on-chain.
+    pub oracle_pubkey: String,
+    /// URL of the profile's normative spec, when the binary advertises one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normative_spec_url: Option<String>,
+    /// Cluster this binary serves (only set for cluster-pinned profiles).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -502,6 +525,9 @@ async fn info(State(state): State<RegistryState>) -> Response {
         max_bytea_bytes: state.max_bytea_bytes,
         max_blob_bytes: state.max_blob_bytes,
         registered_profile_id: state.registered_profile_id,
+        oracle_pubkey: state.oracle_pubkey.clone(),
+        normative_spec_url: state.normative_spec_url.clone(),
+        cluster: state.cluster.clone(),
     })
     .into_response()
 }

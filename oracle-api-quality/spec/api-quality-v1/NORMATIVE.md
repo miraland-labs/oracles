@@ -1,6 +1,6 @@
 # API Quality Profile — Version 1 (Normative)
 
-**Profile identifier:** `x402/oracle/api-quality/v1`  
+**Profile identifier:** `x402/oracles/api-quality/v1`  
 **Document status:** Normative specification for the `oracle-api-quality` reference implementation  
 **Scope:** Off-chain SLA documents and delivery evidence for **JSON-over-HTTP** API response quality adjudication.
 
@@ -30,7 +30,7 @@ This document is **normative** for artifacts evaluated by `oracle-api-quality` a
 | **SLA document**      | UTF-8 JSON object describing the agreed quality bounds for one payment.                                         |
 | **Delivery evidence** | UTF-8 JSON object attesting the seller’s measured outcome (status, latency, body snapshot).                     |
 | **Raw commitment**    | The exact octet sequence hashed; **no** implied canonicalization beyond stable UTF-8 encoding of the JSON text. |
-| **Profile**           | A versioned rule family (`x402/oracle/api-quality/v1`); version `1` matches schema major version below.                |
+| **Profile**           | A versioned rule family (`x402/oracles/api-quality/v1`); version `1` matches schema major version below.                |
 
 ### 2.1 Trust assumptions and threat model (informative but operationally binding)
 
@@ -72,7 +72,7 @@ The SLA document MUST validate against `[schema/sla-document.schema.json](schema
 | Field                                | Role                                                                                                                                                                                                                                           |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `version`                            | **MUST** be `1` for this profile. Future profile revisions may increment.                                                                                                                                                                      |
-| `profile_id`                         | **REQUIRED.** **MUST** be exactly `x402/oracle/api-quality/v1`. A **wrong** `profile_id` SHALL cause evaluation to **fail** before other checks (P-DISP-1). |
+| `profile_id`                         | **REQUIRED.** **MUST** be exactly `x402/oracles/api-quality/v1`. A **wrong** `profile_id` SHALL cause evaluation to **fail** before other checks (P-DISP-1). |
 | `endpoint`, `method`                 | **Declarative** metadata: which resource the parties intend (URI string, HTTP verb). This reference oracle **does not** replay HTTP requests; it evaluates **delivery evidence** only. These fields support audit, dispute, and agent routing. |
 | `min_status_code`, `max_status_code` | Inclusive bounds; evidence `status_code` MUST lie in `[min_status_code, max_status_code]`.                                                                                                                                                     |
 | `max_latency_ms`                     | Upper bound on reported latency; evidence `latency_ms` MUST NOT exceed it.                                                                                                                                                                     |
@@ -112,7 +112,7 @@ Given validated SLA `S` and evidence `E`, the oracle computes a finite conjuncti
 
 | Order | Check           | Predicate                                                                          | Typical `ResolutionReason` (on failure) |
 | ----- | --------------- | ---------------------------------------------------------------------------------- | --------------------------------------- |
-| 0     | Profile id      | `S.profile_id` MUST equal `x402/oracle/api-quality/v1`                                    | General rejection                       |
+| 0     | Profile id      | `S.profile_id` MUST equal `x402/oracles/api-quality/v1`                                    | General rejection                       |
 | 1     | Status          | `E.status_code ∈ [S.min_status_code, S.max_status_code]`                           | Status code out of range                |
 | 2     | Latency         | `E.latency_ms ≤ S.max_latency_ms`                                                  | Latency exceeded                        |
 | 3     | Required fields | For each `f` in `S.required_fields`, `E.response_body` is an object containing `f` | Required fields missing                 |
@@ -129,7 +129,7 @@ If all checks pass, the verdict is **approved** with reason **none**. Implementa
 - **Minor documentation fixes** do not change the profile identifier.
 - **Breaking** changes (new required SLA keys, changed check semantics) require a new profile path (e.g. `…/v2`) and a bumped `version` field where applicable.
 
-Sellers SHOULD declare `x402/oracle/api-quality/v1` in marketplace or discovery metadata when this profile is intended.
+Sellers SHOULD declare `x402/oracles/api-quality/v1` in marketplace or discovery metadata when this profile is intended.
 
 ---
 

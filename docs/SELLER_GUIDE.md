@@ -20,9 +20,9 @@ Three reference oracles ship today. Pick the one that matches what you sell:
 
 | You sell…                                                | Use this oracle / profile                                  | What you upload                                              |
 | -------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
-| **A JSON HTTP API** (status, latency, schema)            | `oracle-api-quality` / `x402/oracle/api-quality/v1`               | A small SLA JSON + a small delivery JSON                     |
-| **An on-chain SPL token transfer or swap**               | `oracle-onchain-transfer` / `x402/oracle/onchain-transfer/v1`     | A small SLA JSON + a small evidence JSON pointing at a real Solana tx |
-| **A large file** (video, dataset, generated artifact)    | `oracle-file-delivery` / `x402/oracle/file-delivery/attestation/v1` | A small SLA JSON + the **file itself** (streamed)            |
+| **A JSON HTTP API** (status, latency, schema)            | `oracle-api-quality` / `x402/oracles/api-quality/v1`               | A small SLA JSON + a small delivery JSON                     |
+| **An on-chain SPL token transfer or swap**               | `oracle-onchain-transfer` / `x402/oracles/onchain-transfer/v1`     | A small SLA JSON + a small evidence JSON pointing at a real Solana tx |
+| **A large file** (video, dataset, generated artifact)    | `oracle-file-delivery` / `x402/oracles/file-delivery/attestation/v1` | A small SLA JSON + the **file itself** (streamed)            |
 
 Don't overthink the choice. If your delivery is a JSON response you compute
 on the fly, pick api-quality. If it's a Solana transaction you broadcast,
@@ -44,7 +44,7 @@ A typical `accepts[]` entry looks like:
   "scheme": "v2:solana:sla-escrow",
   "extra": {
     "oracleProfiles": [{
-      "profileId": "x402/oracle/api-quality/v1",
+      "profileId": "x402/oracles/api-quality/v1",
       "operatorPubkey": "OracLe...",
       "registry": "https://oracle-api.example.com/v1/registry"
     }]
@@ -60,6 +60,19 @@ If you advertise your own service via pr402, you bake these values into
 your `paymentRequirements` once and forget. See
 [`oracle-common/docs/PR402_CONTRACT.md`](../oracle-common/docs/PR402_CONTRACT.md)
 for the normative seller-side advertisement shape.
+
+> **Don't hand-type the JSON.** A copy-paste helper script generates the
+> entire `oracleProfiles[]` entry from a running oracle:
+>
+> ```bash
+> bash oracles/scripts/seller-emit-oracle-profile.sh \
+>     https://oracle-api.example.com
+> ```
+>
+> Output is a single JSON object with `profileId`, `operatorPubkey`,
+> `registry`, plus `normativeSpecUrl` and `cluster` when the oracle
+> advertises them. Paste it directly into `accepts[].extra.oracleProfiles[]`.
+> No typos, no guessed pubkeys.
 
 ## 3. Get a bearer token (one-time setup)
 
@@ -106,7 +119,7 @@ TOKEN="$SELLER_TOKEN"
 cat > sla.json <<'EOF'
 {
   "version": 1,
-  "profile_id": "x402/oracle/api-quality/v1",
+  "profile_id": "x402/oracles/api-quality/v1",
   "endpoint": "https://my-api.example.com/v1/inference",
   "method": "POST",
   "min_status_code": 200,
@@ -171,7 +184,7 @@ TOKEN="$SELLER_TOKEN"
 cat > sla.json <<'EOF'
 {
   "version": 1,
-  "profile_id": "x402/oracle/onchain-transfer/v1",
+  "profile_id": "x402/oracles/onchain-transfer/v1",
   "cluster": "mainnet",
   "expected_transfers": [{
     "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -194,7 +207,7 @@ TX_SIG="$(spl-token transfer ... --output json | jq -r .signature)"
 cat > delivery.json <<EOF
 {
   "version": 1,
-  "profile_id": "x402/oracle/onchain-transfer/v1",
+  "profile_id": "x402/oracles/onchain-transfer/v1",
   "tx_signature": "$TX_SIG",
   "asserted_transfers": [{
     "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -235,7 +248,7 @@ TOKEN="$SELLER_TOKEN"
 cat > sla.json <<'EOF'
 {
   "version": 1,
-  "profile_id": "x402/oracle/file-delivery/attestation/v1",
+  "profile_id": "x402/oracles/file-delivery/attestation/v1",
   "expected_size_bytes_min": 5242880,
   "expected_size_bytes_max": 524288000,
   "expected_mime": "video/mp4"
@@ -267,9 +280,9 @@ forget it — your SLA implicitly encodes the rules.
 
 | Profile                       | Spec                                                                              |
 | ----------------------------- | --------------------------------------------------------------------------------- |
-| `x402/oracle/api-quality/v1`         | [`oracle-api-quality/spec/api-quality-v1/NORMATIVE.md`](../oracle-api-quality/spec/api-quality-v1/NORMATIVE.md) |
-| `x402/oracle/onchain-transfer/v1`    | [`oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md`](../oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md) |
-| `x402/oracle/file-delivery/attestation/v1` | [`oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md`](../oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md) |
+| `x402/oracles/api-quality/v1`         | [`oracle-api-quality/spec/api-quality-v1/NORMATIVE.md`](../oracle-api-quality/spec/api-quality-v1/NORMATIVE.md) |
+| `x402/oracles/onchain-transfer/v1`    | [`oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md`](../oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md) |
+| `x402/oracles/file-delivery/attestation/v1` | [`oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md`](../oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md) |
 
 The high-level rules:
 
@@ -298,7 +311,7 @@ because of trailing newlines, BOM, or pretty-print vs minified JSON. Fix:
 your on-chain `delivery_hash`. Don't recompute from local bytes.
 
 **`profile_id` mismatch.** Your SLA must declare `profile_id` matching the
-oracle's profile (e.g. `x402/oracle/api-quality/v1`). Missing or wrong → instant
+oracle's profile (e.g. `x402/oracles/api-quality/v1`). Missing or wrong → instant
 reject. Use the examples in §4 verbatim.
 
 **Bearer token expired or revoked.** `401 Unauthorized` from any

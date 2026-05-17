@@ -37,7 +37,7 @@ pub trait OracleEvaluator: Send + Sync {
     /// Evidence shape. Same constraints as Sla.
     type Evidence: DeserializeOwned + Serialize + Send + Sync;
 
-    /// Stable, canonical profile identifier (e.g. `"x402/oracle/api-quality/v1"`).
+    /// Stable, canonical profile identifier (e.g. `"x402/oracles/api-quality/v1"`).
     /// Single canonical id per profile; aliases are not supported.
     fn profile_id(&self) -> &'static str;
 

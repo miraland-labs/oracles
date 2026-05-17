@@ -2,7 +2,7 @@
 //!
 //! There is exactly one canonical resolution-hash recipe shared by every family
 //! (see design.md C9 and §Single Canonical Resolution-Hash Recipe). The envelope
-//! is `x402/oracle/resolution-envelope/v1` with a fixed key order; per-family details live
+//! is `x402/oracles/resolution-envelope/v1` with a fixed key order; per-family details live
 //! under the `details` slot. SHA-256 over the serialized envelope produces the
 //! 32-byte digest written to `Payment.resolution_hash`.
 
@@ -26,12 +26,12 @@ use crate::{
 
 /// Canonical envelope identifier — opaque to the chain, used by indexers to confirm
 /// they are looking at the v1 recipe.
-pub const RESOLUTION_ENVELOPE_PROFILE: &str = "x402/oracle/resolution-envelope/v1";
+pub const RESOLUTION_ENVELOPE_PROFILE: &str = "x402/oracles/resolution-envelope/v1";
 
 /// Compute the canonical resolution hash for a given verdict.
 ///
 /// `details` is the per-family JSON the evaluator builds (e.g. `{txSignature, ...}`
-/// for `x402/oracle/onchain-transfer/v1`). It is embedded verbatim under the `details`
+/// for `x402/oracles/onchain-transfer/v1`). It is embedded verbatim under the `details`
 /// envelope key.
 ///
 /// Determinism (P-DET-2): the function never reads the wall clock or any

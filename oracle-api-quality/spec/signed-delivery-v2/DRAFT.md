@@ -41,7 +41,7 @@ stable serialization of `response_body`).
 
 - Ship as **`x402/api-quality/signed-delivery/v2`** with a bumped `version`
   field in the SLA document.
-- v1 (`x402/oracle/api-quality/v1`) remains available for low-friction integrations.
+- v1 (`x402/oracles/api-quality/v1`) remains available for low-friction integrations.
 
 ## References
 

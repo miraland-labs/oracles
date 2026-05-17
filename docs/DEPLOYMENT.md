@@ -461,8 +461,10 @@ The response includes the SHA-256 hex (the seller commits this as
 
 ## 9. pr402 integration
 
-Once the oracle is healthy and reachable, advertise it through `pr402`'s
-discovery contract. Sellers list this oracle in their HTTP-402 challenge:
+Once the oracle is healthy and reachable, register it with `pr402` so it
+gets advertised on `GET /api/v1/facilitator/capabilities` under
+`slaEscrowOracleProfiles[]`. Sellers and buyers discover oracles through
+that endpoint plus the seller's own HTTP-402 challenge:
 
 ```json
 {
@@ -470,7 +472,7 @@ discovery contract. Sellers list this oracle in their HTTP-402 challenge:
     "scheme": "v2:solana:sla-escrow",
     "extra": {
       "oracleProfiles": [{
-        "profileId": "x402/oracle/api-quality/v1",
+        "profileId": "x402/oracles/api-quality/v1",
         "operatorPubkey": "OracLe...",
         "registry": "https://oracle-api.example.com/v1/registry"
       }]
@@ -479,11 +481,47 @@ discovery contract. Sellers list this oracle in their HTTP-402 challenge:
 }
 ```
 
-`pr402` enforces at advertisement time and at `/verify` that:
+### 9.1 Tell pr402 about your oracle
 
-- Every `operatorPubkey` is in `oracleAuthorities[]`.
-- The buyer's chosen `oracle_authority` matches an advertised profile's
-  `operatorPubkey`.
+A copy-paste helper generates the SQL pr402's operator runs against the
+facilitator's `parameters` table:
+
+```bash
+bash oracles/scripts/announce-to-pr402.sh \
+    https://oracle-api.example.com
+```
+
+Output is a short `INSERT INTO parameters ... ON CONFLICT DO UPDATE` block.
+Hand it to whoever owns pr402's deployment, or run it yourself if you
+operate both. Within ~60 seconds (parameters cache TTL), `GET /capabilities`
+exposes your oracle. Verify with the `curl | jq` suggestion the script prints.
+
+The helper reads your oracle's own `/v1/registry/info` and `/health`
+endpoints — no auth, no DB access required.
+
+### 9.2 Help sellers reference your oracle
+
+Sellers paste an `oracleProfiles[]` entry into their HTTP-402 challenge.
+Generate it with one command:
+
+```bash
+bash oracles/scripts/seller-emit-oracle-profile.sh \
+    https://oracle-api.example.com
+```
+
+Output is a single JSON object the seller drops into
+`accepts[].extra.oracleProfiles[]`.
+
+### 9.3 What pr402 enforces
+
+- Every `operatorPubkey` in the seller's `oracleProfiles[]` MUST appear in
+  `oracleAuthorities[]` (the flat allowlist).
+- The buyer's chosen `oracle_authority` at `POST /build-sla-escrow-payment-tx`
+  MUST match an advertised profile's `operatorPubkey`.
+- When `PR402_SLA_ESCROW_REQUIRE_PROFILE_MATCH=true` is set on pr402, the
+  matched profile's `profileId` MUST also be one of the profiles pr402
+  advertises on `/capabilities`. Off by default; flip on once the
+  ecosystem has stabilised.
 
 See [`oracle-common/docs/PR402_CONTRACT.md`](../oracle-common/docs/PR402_CONTRACT.md)
 for the full normative shape.

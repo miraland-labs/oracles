@@ -157,7 +157,7 @@ async fn minio_round_trip_5mib_blob() {
     // 5. Build the SLA + evidence and run the evaluator.
     let sla = FileDeliverySla {
         version: 1,
-        profile_id: "x402/oracle/file-delivery/attestation/v1".into(),
+        profile_id: "x402/oracles/file-delivery/attestation/v1".into(),
         expected_size_bytes_min: 4 * 1024 * 1024,
         expected_size_bytes_max: 6 * 1024 * 1024,
         expected_mime: None,

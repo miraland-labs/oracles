@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "x402/oracle/api-quality/v1/sla-document",
+  "$id": "x402/oracles/api-quality/v1/sla-document",
   "title": "SLA document (API Quality v1)",
   "description": "Normative JSON shape for sla_hash commitment; must match oracle-api-quality SlaDocument deserialization. Core keys are evaluated; additional keys are ignored by oracle-api-quality v1 (serde forward-compat).",
   "type": "object",
@@ -10,7 +10,7 @@
     "version": {
       "type": "integer",
       "const": 1,
-      "description": "Profile major version; v1 for x402/oracle/api-quality/v1."
+      "description": "Profile major version; v1 for x402/oracles/api-quality/v1."
     },
     "endpoint": {
       "type": "string",
@@ -24,7 +24,7 @@
     },
     "profile_id": {
       "type": "string",
-      "const": "x402/oracle/api-quality/v1",
+      "const": "x402/oracles/api-quality/v1",
       "description": "REQUIRED in v1; mismatches are rejected by the dispatcher (P-DISP-1)."
     },
     "response_schema": {

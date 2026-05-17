@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::PROFILE_ID;
 
-/// Off-chain SLA document for `x402/oracle/api-quality/v1`.
+/// Off-chain SLA document for `x402/oracles/api-quality/v1`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlaDocument {
     pub version: u32,
-    /// REQUIRED. Must equal `x402/oracle/api-quality/v1` (see C8 in design.md).
+    /// REQUIRED. Must equal `x402/oracles/api-quality/v1` (see C8 in design.md).
     pub profile_id: String,
     pub endpoint: String,
     pub method: String,
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn defaults_apply_to_optional_fields() {
         let s: SlaDocument = serde_json::from_str(
-            r#"{"version":1,"profile_id":"x402/oracle/api-quality/v1","endpoint":"https://x","method":"GET"}"#,
+            r#"{"version":1,"profile_id":"x402/oracles/api-quality/v1","endpoint":"https://x","method":"GET"}"#,
         )
         .unwrap();
         assert_eq!(s.version, 1);

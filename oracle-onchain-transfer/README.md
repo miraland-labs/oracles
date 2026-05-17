@@ -1,7 +1,7 @@
 # oracle-onchain-transfer
 
 On-chain transfer / swap quality oracle for the x402/pr402 ecosystem.
-Implements the [`x402/oracle/onchain-transfer/v1`](spec/onchain-transfer-v1/NORMATIVE.md)
+Implements the [`x402/oracles/onchain-transfer/v1`](spec/onchain-transfer-v1/NORMATIVE.md)
 profile: re-derives token deltas from `getTransaction(jsonParsed)` and
 approves only when every `expected_transfers[]` entry is satisfied with
 `direction`, `mint`, `recipient_owner`, and `min_amount` matching.

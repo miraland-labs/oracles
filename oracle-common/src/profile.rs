@@ -143,27 +143,27 @@ mod tests {
     fn register_and_resolve_exact_id() {
         let mut reg = ProfileRegistry::new();
         reg.register(RegisteredProfile {
-            profile_id: "x402/oracle/api-quality/v1",
+            profile_id: "x402/oracles/api-quality/v1",
             run: Arc::new(StubRunner {
-                id: "x402/oracle/api-quality/v1",
+                id: "x402/oracles/api-quality/v1",
             }),
         });
         assert_eq!(reg.len(), 1);
-        let r = reg.resolve("x402/oracle/api-quality/v1").unwrap();
-        assert_eq!(r.profile_id(), "x402/oracle/api-quality/v1");
+        let r = reg.resolve("x402/oracles/api-quality/v1").unwrap();
+        assert_eq!(r.profile_id(), "x402/oracles/api-quality/v1");
     }
 
     #[test]
     fn unknown_id_returns_none() {
         let mut reg = ProfileRegistry::new();
         reg.register(RegisteredProfile {
-            profile_id: "x402/oracle/api-quality/v1",
+            profile_id: "x402/oracles/api-quality/v1",
             run: Arc::new(StubRunner {
-                id: "x402/oracle/api-quality/v1",
+                id: "x402/oracles/api-quality/v1",
             }),
         });
         assert!(reg
-            .resolve("x402/oracle/file-delivery/attestation/v1")
+            .resolve("x402/oracles/file-delivery/attestation/v1")
             .is_none());
     }
 
@@ -173,17 +173,18 @@ mod tests {
         // declaring a similar-but-not-equal id is refused.
         let mut reg = ProfileRegistry::new();
         reg.register(RegisteredProfile {
-            profile_id: "x402/oracle/api-quality/v1",
+            profile_id: "x402/oracles/api-quality/v1",
             run: Arc::new(StubRunner {
-                id: "x402/oracle/api-quality/v1",
+                id: "x402/oracles/api-quality/v1",
             }),
         });
         for nope in [
-            "x402/oracle/api-quality/v2",
-            "x402/oracle/api-quality",
-            "x402/api-quality/v1",
-            "api-quality/v1",
-            "X402/oracle/api-quality/v1", // case-sensitive
+            "x402/oracles/api-quality/v2", // wrong version
+            "x402/oracles/api-quality",    // missing version
+            "x402/oracle/api-quality/v1",  // singular namespace (legacy typo)
+            "x402/api-quality/v1",         // missing oracles namespace
+            "api-quality/v1",              // missing x402 prefix
+            "X402/oracles/api-quality/v1", // case-sensitive
         ] {
             assert!(reg.resolve(nope).is_none(), "must not resolve: {nope}");
         }

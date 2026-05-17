@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "JSON-shaped SLA quality oracle (x402/oracle/api-quality/v1)"
+description = "JSON-shaped SLA quality oracle (x402/oracles/api-quality/v1)"
 keywords = ["x402", "oracle", "sla", "api-quality", "solana"]
 categories = ["web-programming", "cryptography"]
 

@@ -1,7 +1,7 @@
 # oracle-api-quality
 
 JSON-shaped SLA quality oracle for the x402/pr402 ecosystem. Implements the
-[`x402/oracle/api-quality/v1`](spec/api-quality-v1/NORMATIVE.md) profile: status code,
+[`x402/oracles/api-quality/v1`](spec/api-quality-v1/NORMATIVE.md) profile: status code,
 latency, required-fields, JSON Schema, and body-length checks against a JSON
 delivery payload.
 

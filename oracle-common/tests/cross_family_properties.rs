@@ -40,7 +40,7 @@ fn job() -> EvaluationJob {
 fn resolution_envelope_profile_id_is_canonical() {
     assert_eq!(
         RESOLUTION_ENVELOPE_PROFILE,
-        "x402/oracle/resolution-envelope/v1"
+        "x402/oracles/resolution-envelope/v1"
     );
 }
 

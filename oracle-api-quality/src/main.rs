@@ -5,7 +5,7 @@
 //! * [`oracle_common::config::OracleConfig`] from env vars.
 //! * Postgres ledger if `DATABASE_URL` is set.
 //! * Storage backend per `ORACLE_REGISTRY_BACKEND`.
-//! * Single registered profile `x402/oracle/api-quality/v1`.
+//! * Single registered profile `x402/oracles/api-quality/v1`.
 //! * Chain monitor + worker + HTTP server.
 
 use std::{
@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     let config = OracleConfig::from_env().context("loading OracleConfig from env")?;
 
     info!("╔══════════════════════════════════════════════════════╗");
-    info!("║  oracle-api-quality — x402/oracle/api-quality/v1     ║");
+    info!("║  oracle-api-quality — x402/oracles/api-quality/v1     ║");
     info!("╚══════════════════════════════════════════════════════╝");
     info!("oracle_pubkey:  {}", config.oracle_pubkey());
     info!("program_id:     {}", config.escrow_program_id);
@@ -173,6 +173,13 @@ async fn main() -> anyhow::Result<()> {
         max_bytea_bytes: config.registry_max_bytea_bytes,
         max_blob_bytes: config.registry_max_blob_bytes,
         registered_profile_id: PROFILE_ID,
+        oracle_pubkey: config.oracle_pubkey().to_string(),
+        normative_spec_url: Some(
+            "https://github.com/miraland-labs/oracles/blob/main/\
+             oracle-api-quality/spec/api-quality-v1/NORMATIVE.md"
+                .into(),
+        ),
+        cluster: None,
     };
     let app =
         create_core_router(state.clone()).nest("/v1/registry", registry_router(registry_state));

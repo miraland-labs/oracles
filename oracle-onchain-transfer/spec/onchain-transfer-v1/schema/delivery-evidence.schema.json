@@ -1,11 +1,11 @@
 {
-  "title": "x402/oracle/onchain-transfer/v1 delivery evidence",
+  "title": "x402/oracles/onchain-transfer/v1 delivery evidence",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "profile_id", "tx_signature", "asserted_transfers", "submitted_at"],
   "properties": {
     "version": { "const": 1 },
-    "profile_id": { "const": "x402/oracle/onchain-transfer/v1" },
+    "profile_id": { "const": "x402/oracles/onchain-transfer/v1" },
     "tx_signature": { "type": "string", "minLength": 64, "maxLength": 100 },
     "asserted_transfers": {
       "type": "array",

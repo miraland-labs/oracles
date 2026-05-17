@@ -1,7 +1,7 @@
 //! `StreamingBlobFetcher` — wraps `RegistryStreamingFetcher` and converts the
 //! `StreamedBlobOutcome` into `FileDeliveryEvidence`.
 //!
-//! The on-chain `delivery_hash` for `x402/oracle/file-delivery/attestation/v1` commits
+//! The on-chain `delivery_hash` for `x402/oracles/file-delivery/attestation/v1` commits
 //! directly to the blob bytes (not to a JSON envelope), so the fetcher's job is
 //! to:
 //!

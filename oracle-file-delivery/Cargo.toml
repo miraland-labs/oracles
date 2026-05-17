@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "File delivery attestation oracle (x402/oracle/file-delivery/attestation/v1)"
+description = "File delivery attestation oracle (x402/oracles/file-delivery/attestation/v1)"
 keywords = ["x402", "oracle", "sla", "file-delivery", "solana"]
 categories = ["web-programming", "cryptography"]
 

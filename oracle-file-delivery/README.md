@@ -1,7 +1,7 @@
 # oracle-file-delivery
 
 Streaming file delivery quality oracle for the x402/pr402 ecosystem.
-Implements the [`x402/oracle/file-delivery/attestation/v1`](spec/file-delivery-attestation-v1/NORMATIVE.md)
+Implements the [`x402/oracles/file-delivery/attestation/v1`](spec/file-delivery-attestation-v1/NORMATIVE.md)
 profile: streams the seller's blob from the registry, computes SHA-256
 incrementally, sniffs MIME from the leading 512 bytes, and approves when
 size, MIME, and (optional) attestor-pubkey constraints all hold.

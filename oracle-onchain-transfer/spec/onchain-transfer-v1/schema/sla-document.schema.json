@@ -1,11 +1,11 @@
 {
-  "title": "x402/oracle/onchain-transfer/v1 SLA document",
+  "title": "x402/oracles/onchain-transfer/v1 SLA document",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "profile_id", "cluster", "expected_transfers"],
   "properties": {
     "version": { "const": 1 },
-    "profile_id": { "const": "x402/oracle/onchain-transfer/v1" },
+    "profile_id": { "const": "x402/oracles/onchain-transfer/v1" },
     "cluster": { "enum": ["mainnet-beta", "devnet", "testnet"] },
     "expected_transfers": {
       "type": "array",

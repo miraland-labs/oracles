@@ -12,7 +12,7 @@
 //! | 448–511 | reserved for ecosystem-wide additions |
 //! | 512+ | per-deployment customization |
 
-/// Custom resolution-reason codes for `x402/oracle/onchain-transfer/v1`.
+/// Custom resolution-reason codes for `x402/oracles/onchain-transfer/v1`.
 pub mod onchain_transfer {
     pub const TRANSFER_TX_NOT_FOUND: u16 = 256;
     pub const TRANSFER_TX_FAILED: u16 = 257;
@@ -26,7 +26,7 @@ pub mod onchain_transfer {
     pub const RANGE: std::ops::RangeInclusive<u16> = 256..=319;
 }
 
-/// Custom resolution-reason codes for `x402/oracle/file-delivery/attestation/v1`.
+/// Custom resolution-reason codes for `x402/oracles/file-delivery/attestation/v1`.
 pub mod file_delivery {
     pub const BLOB_SIZE_OUT_OF_RANGE: u16 = 320;
     pub const BLOB_MIME_MISMATCH: u16 = 321;
