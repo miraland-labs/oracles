@@ -1,0 +1,108 @@
+[workspace]
+resolver = "2"
+members = [
+    "oracle-common",
+    "oracle-api-quality",
+    "oracle-onchain-transfer",
+    "oracle-file-delivery",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/miraland-labs/x402"
+authors = ["Miraland Labs <hello@miraland.io>"]
+rust-version = "1.92"
+
+[workspace.dependencies]
+# Internal
+oracle-common = { path = "oracle-common", version = "0.1.0" }
+
+# x402 ecosystem
+sla-escrow-api = "0.3"
+
+# Web server / async
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio = { version = "1.45", features = ["full"] }
+async-trait = "0.1"
+
+# Solana
+solana-client = "2.3"
+solana-pubsub-client = "2.3"
+solana-sdk = "2.3"
+solana-program = "2.3"
+solana-transaction-status = "2.3"
+solana-transaction-status-client-types = "2.3"
+spl-token = { version = "4", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "7", features = ["no-entrypoint"] }
+
+# Storage
+deadpool-postgres = { version = "0.14", features = ["serde"] }
+tokio-postgres = { version = "0.7", features = [
+    "with-serde_json-1",
+    "with-chrono-0_4",
+] }
+postgres-openssl = "0.5"
+openssl = "0.10"
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+    "rustls",
+    "rt-tokio",
+] }
+aws-config = { version = "1", default-features = false, features = [
+    "rustls",
+    "rt-tokio",
+] }
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "stream",
+    "multipart",
+] }
+futures-util = "0.3"
+bytes = "1"
+
+# Serialization / hashing
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+bytemuck = "1.16"
+bs58 = "0.5"
+base64 = "0.22"
+hex = "0.4"
+sha2 = "0.10"
+ed25519-dalek = "2"
+
+# Config / logging / errors
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+thiserror = "2.0"
+
+# JSON Schema (used by api-quality evaluator)
+jsonschema = "0.28"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# MIME sniffing
+infer = "0.16"
+
+# Steel framework (event/account compat)
+steel = { package = "miraland-steel", version = "4.0.3" }
+
+# IDs / dev
+ulid = "1"
+rand = "0.8"
+
+# Testing
+proptest = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

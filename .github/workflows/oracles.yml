@@ -1,0 +1,127 @@
+name: oracles
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "oracles/**"
+      - ".github/workflows/oracles.yml"
+  pull_request:
+    paths:
+      - "oracles/**"
+      - ".github/workflows/oracles.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+defaults:
+  run:
+    working-directory: oracles
+
+jobs:
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: oracles
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: cargo clippy -D warnings
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: oracles
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build:
+    name: cargo build --workspace
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: oracles
+      - run: cargo build --workspace --all-targets
+
+  test:
+    name: cargo test --workspace
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: oracle
+          POSTGRES_PASSWORD: oracle
+          POSTGRES_DB: oracle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U oracle"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      minio:
+        image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        env:
+          MINIO_ROOT_USER: oracletest
+          MINIO_ROOT_PASSWORD: oracletest
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -fsS http://127.0.0.1:9000/minio/health/live"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: "postgres://oracle:oracle@127.0.0.1:5432/oracle_test"
+      ORACLE_REGISTRY_S3_ENDPOINT: "http://127.0.0.1:9000"
+      ORACLE_REGISTRY_S3_BUCKET: "oracle-blobs"
+      ORACLE_REGISTRY_S3_ACCESS_KEY: "oracletest"
+      ORACLE_REGISTRY_S3_SECRET_KEY: "oracletest"
+      ORACLE_REGISTRY_S3_REGION: "us-east-1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.92.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: oracles
+      - run: cargo test --workspace -- --test-threads=4
+
+      # Bootstrap a MinIO bucket so the ignored integration test can write into it.
+      - name: provision MinIO bucket
+        env:
+          MC_HOST_oracle: "http://oracletest:oracletest@127.0.0.1:9000"
+        run: |
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
+          chmod +x /tmp/mc
+          /tmp/mc mb --ignore-existing oracle/oracle-blobs
+
+      - name: integration — file-delivery against MinIO
+        env:
+          ORACLE_TEST_MINIO_ENDPOINT: "http://127.0.0.1:9000"
+          ORACLE_TEST_MINIO_BUCKET: "oracle-blobs"
+          ORACLE_TEST_MINIO_ACCESS_KEY: "oracletest"
+          ORACLE_TEST_MINIO_SECRET_KEY: "oracletest"
+          ORACLE_TEST_MINIO_REGION: "us-east-1"
+        run: cargo test -p oracle-file-delivery --test minio_integration -- --ignored --nocapture

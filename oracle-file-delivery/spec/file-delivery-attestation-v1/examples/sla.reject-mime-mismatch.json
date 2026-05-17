@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "profile_id": "x402/oracle/file-delivery/attestation/v1",
+  "expected_size_bytes_min": 1024,
+  "expected_size_bytes_max": 1048576,
+  "expected_mime": "image/png"
+}

@@ -1,0 +1,29 @@
+{
+  "title": "x402/oracle/onchain-transfer/v1 SLA document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "profile_id", "cluster", "expected_transfers"],
+  "properties": {
+    "version": { "const": 1 },
+    "profile_id": { "const": "x402/oracle/onchain-transfer/v1" },
+    "cluster": { "enum": ["mainnet-beta", "devnet", "testnet"] },
+    "expected_transfers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mint", "recipient_owner", "min_amount", "direction"],
+        "properties": {
+          "mint": { "type": "string", "minLength": 32, "maxLength": 44 },
+          "recipient_owner": { "type": "string", "minLength": 32, "maxLength": 44 },
+          "min_amount": { "type": "string", "pattern": "^[0-9]+$" },
+          "direction": { "enum": ["in", "out"] }
+        }
+      }
+    },
+    "swap_router": { "type": "string" },
+    "slippage_bps": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "deadline_unix": { "type": "integer" }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "profile_id": "x402/oracle/onchain-transfer/v1",
+  "tx_signature": "5J7XZmPQ8KvNhGfWnLpZyR3TbVu4Cw9XaeGq8Bj2Lk7Hd6Yp1Mn3sTkV4cZxF8eRgN1mB5oJyW",
+  "asserted_transfers": [
+    {
+      "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+      "recipient_owner": "BuyerPubkey1111111111111111111111111111111",
+      "claimed_delta": "1000000"
+    }
+  ],
+  "submitted_at": 1750000000
+}

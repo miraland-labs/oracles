@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "profile_id": "x402/oracle/api-quality/v1",
+  "endpoint": "https://api.example.com/v1/ping",
+  "method": "GET"
+}

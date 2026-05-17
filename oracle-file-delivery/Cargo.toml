@@ -1,0 +1,47 @@
+[package]
+name = "oracle-file-delivery"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "File delivery attestation oracle (x402/oracle/file-delivery/attestation/v1)"
+keywords = ["x402", "oracle", "sla", "file-delivery", "solana"]
+categories = ["web-programming", "cryptography"]
+
+[[bin]]
+name = "oracle-file-delivery"
+path = "src/main.rs"
+
+[dependencies]
+oracle-common = { workspace = true }
+sla-escrow-api = { workspace = true }
+
+axum = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+deadpool-postgres = { workspace = true }
+postgres-openssl = { workspace = true }
+openssl = { workspace = true }
+reqwest = { workspace = true }
+solana-client = { workspace = true }
+solana-sdk = { workspace = true }
+dotenvy = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+infer = { workspace = true }
+futures-util = { workspace = true }
+anyhow = { workspace = true }
+ed25519-dalek = { workspace = true }
+bs58 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+axum = { workspace = true }
+bytes = { workspace = true }

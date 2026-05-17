@@ -1,0 +1,8 @@
+[Unit]
+Description=All x402 SLA-Escrow oracle services
+Wants=oracle@api-quality.service oracle@onchain-transfer.service oracle@file-delivery.service
+After=network-online.target
+AllowIsolate=no
+
+[Install]
+WantedBy=multi-user.target

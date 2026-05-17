@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "profile_id": "x402/oracle/onchain-transfer/v1",
+  "cluster": "devnet",
+  "expected_transfers": [
+    {
+      "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+      "recipient_owner": "BuyerPubkey1111111111111111111111111111111",
+      "min_amount": "5000000",
+      "direction": "in"
+    }
+  ]
+}

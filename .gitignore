@@ -1,0 +1,8 @@
+target/
+**/target/
+*.env
+.env
+*.keypair.json
+.DS_Store
+*.swp
+*.swo

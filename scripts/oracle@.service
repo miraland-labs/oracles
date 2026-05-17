@@ -1,0 +1,28 @@
+[Unit]
+Description=oracle-%i (x402 SLA-Escrow %i family oracle)
+After=network-online.target
+Wants=network-online.target
+PartOf=oracle.target
+
+[Service]
+Type=simple
+User=oracle
+Group=oracle
+WorkingDirectory=/opt/oracle/%i
+EnvironmentFile=/etc/oracle/%i.env
+ExecStart=/opt/oracle/%i/oracle-%i
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+# Hardening (kept conservative; expand in production if your binary is fully
+# deterministic about its filesystem footprint).
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+StateDirectory=oracle/%i
+LogsDirectory=oracle/%i
+
+[Install]
+WantedBy=multi-user.target
