@@ -76,7 +76,7 @@ Five steps, end-to-end:
 2. **Clone the closest sibling.** Three reference crates in [`oracles`](https://github.com/miraland-labs/oracles): `oracle-api-quality`, `oracle-onchain-transfer`, `oracle-file-delivery`. Pick the one whose evidence shape resembles yours.
 3. **Implement `OracleEvaluator`.** Two methods: a `profile_id()` returning your stable id (e.g. `x402/oracles/<domain>/v1`), and `evaluate(ctx, sla, evidence)` returning approve / reject + a numeric resolution reason. Your domain expertise goes here — and only here.
 4. **Register your profile** at startup, configure your DB and registry, deploy with `oracles/scripts/install.sh <family> <binary> <env-file>` on Ubuntu 24.04.
-5. **Get advertised**. After a brief facilitator-side onboarding, pr402 lists your oracle on `GET /capabilities` for sellers and buyers to discover. Sellers reference you in their HTTP-402 challenge. Buyers pick you. You earn tips on every verdict.
+5. **Get advertised**. The facilitator reviews and endorses your oracle. Once accepted, pr402 lists it on `GET /capabilities` for sellers and buyers to discover. Sellers reference you in their HTTP-402 challenge. Buyers pick you. You earn tips on every verdict.
 
 The full bring-up runbook is in [`oracles/docs/DEPLOYMENT.md`](../DEPLOYMENT.md).
 Day-2 operations — monitoring, rotations, backup, incident playbooks —

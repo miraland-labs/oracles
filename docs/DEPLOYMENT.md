@@ -492,9 +492,25 @@ bash oracles/scripts/announce-to-pr402.sh \
 ```
 
 Output is a short `INSERT INTO parameters ... ON CONFLICT DO UPDATE` block.
-Hand it to whoever owns pr402's deployment, or run it yourself if you
-operate both. Within ~60 seconds (parameters cache TTL), `GET /capabilities`
-exposes your oracle. Verify with the `curl | jq` suggestion the script prints.
+
+**If you operate pr402 yourself**, run the SQL directly. Within ~60
+seconds (parameters cache TTL), `GET /capabilities` exposes your oracle.
+Verify with the `curl | jq` suggestion the script prints.
+
+**If pr402 is operated by someone else (the typical case)**, open a
+registration issue against the pr402 repository:
+
+> https://github.com/miralandlabs/pr402/issues/new?template=register-oracle.md
+
+The template prompts for the SQL block, contact info, and a small set of
+operator attestations (keypair custody, uptime commitment, devnet
+evidence). The pr402 operator reviews and runs the SQL on accept; the
+issue thread is the public audit trail. Listing is **editorial** —
+treat it as a brief review process, not self-service.
+
+Both paths produce the same end state: your oracle visible at
+`GET /api/v1/facilitator/capabilities → slaEscrowOracleProfiles[]` for
+sellers and buyers to discover.
 
 The helper reads your oracle's own `/v1/registry/info` and `/health`
 endpoints — no auth, no DB access required.

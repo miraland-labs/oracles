@@ -104,9 +104,9 @@ MinIO bootstrap scripts included."
 
 > *[Visual: caption — "5. Get advertised"]*
 
-"**Five.** After a brief operator-side registration step, pr402
-advertises your oracle on `GET /capabilities`. Sellers list you in their
-HTTP-402 challenge. Buyers pick you. You earn tips on every verdict."
+"**Five.** The facilitator reviews and endorses your oracle, then lists
+it on `GET /capabilities`. Sellers reference you in their HTTP-402
+challenge. Buyers pick you. You earn tips on every verdict."
 
 ---
 

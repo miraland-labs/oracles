@@ -99,4 +99,10 @@ cat <<VERIFY
 --
 --   curl -fsS https://<your-pr402-host>/api/v1/facilitator/capabilities \\
 --       | jq '.slaEscrowOracleProfiles[] | select(.profileId=="${PROFILE_ID}")'
+--
+-- Don't have direct database access to pr402? Open a registration issue
+-- against the pr402 repository — the issue template has space for this
+-- SQL block plus the operator attestations the facilitator team reviews:
+--
+--   https://github.com/miralandlabs/pr402/issues/new?template=register-oracle.md
 VERIFY
