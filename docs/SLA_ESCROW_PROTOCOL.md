@@ -1,6 +1,6 @@
 # SLA-Escrow Protocol — Cross-Actor Reference
 
-**Protocol version**: 1.0 (Wave A + Wave B fields included)
+**Protocol version**: 1.0
 **Audience**: integrators building any of the four roles: **buyer agent**,
 **seller**, **oracle operator**, **pr402 facilitator operator**.
 
@@ -261,7 +261,9 @@ The on-chain program enforces:
 - `payment.seller == ix_signer` (only the bound seller may submit).
 - `payment.state == Funded` and `resolution_state == Pending`.
 - `payment.expires_at - delivery_cutoff_seconds >= clock.unix_timestamp`
-  (deadline-side enforcement, Wave A §1.1 boundary).
+  — submission must arrive at least `delivery_cutoff_seconds` before
+  expiry, so the oracle has a guaranteed window to evaluate before the
+  deadline.
 
 **On-chain state change**:
 - `Payment.delivery_hash = <provided>`.
@@ -288,9 +290,11 @@ artifacts, evaluates them against the SLA, and signs `ConfirmOracle`.
 4. Verifies `payment_uid` and `buyer_nonce` (when present) match between
    SLA and evidence and against `Payment.payment_uid`.
 5. Runs the profile-specific check battery (`OracleEvaluator::evaluate`):
-   freshness (`evidence ≥ Payment.created_at`, Wave A §1.1), profile
-   checks (status code / latency / size / mime / on-chain delta /
-   tx-signature uniqueness).
+   freshness (`evidence ≥ Payment.created_at` so the seller can't replay
+   evidence from before the buyer funded escrow), profile checks (status
+   code / latency / size / mime / on-chain delta), and cross-payment
+   replay protection (the same `tx_signature` or `delivery_hash` may not
+   settle two different payments).
 6. Computes `resolution_hash` over a canonical envelope of
    `(profile_id, payment_uid, sla_hash, delivery_hash, verdict, checks)`.
    Anyone holding the SLA + evidence bytes can recompute and verify.
@@ -334,8 +338,8 @@ The base SLA shape is the same across profiles:
 |---|---|---|---|
 | `version` | yes | buyer | Currently `1`. |
 | `profile_id` | yes | buyer | Must match the chosen profile exactly (e.g. `x402/oracles/api-quality/v1`). |
-| `payment_uid` | yes | buyer | 64 hex chars. Wave B §1.2. Hex of `Payment.payment_uid`. |
-| `buyer_nonce` | optional | buyer | 64 hex chars. Wave B §1.4. Defends cross-SLA replay. |
+| `payment_uid` | yes | buyer | 64 hex chars. Hex of `Payment.payment_uid`. Binds this SLA to one and only one on-chain payment; the seller's evidence must echo it. |
+| `buyer_nonce` | optional | buyer | 64 hex chars (32 random bytes). Defends cross-SLA replay when SLA terms are otherwise identical between two buyers. The seller's evidence must echo it when set. |
 
 Profile-specific SLA fields:
 
@@ -364,14 +368,18 @@ signature), `asserted_transfers[]`, `submitted_at`, `payment_uid`
 - `expected_size_bytes_min` / `expected_size_bytes_max` (u64)
 - `expected_mime` (optional)
 - `expected_extension` (optional)
-- `attestor_pubkey` (optional, reserves the slot for future
-  signed-delivery profile)
+- `attestor_pubkey` (optional). When set, the v1 evaluator records that
+  the SLA expects a signed attestation but the v1 streaming-evidence
+  path does not yet carry signatures, so the check is recorded as
+  failed. Sellers should leave it unset for the v1 attestation profile.
 
 Evidence is the file bytes themselves (uploaded via `POST
 /v1/registry/blob`). The oracle re-hashes on read and verifies size +
-MIME. Wave B `payment_uid` / `buyer_nonce` echoing is via the SLA only
-in v1; a future signed-delivery profile (Wave C) will add a companion
-JSON for evidence-side echoing.
+MIME. `payment_uid` / `buyer_nonce` echoing is via the SLA only in this
+profile — the file *is* the evidence and there is no JSON envelope to
+inject the echo into. The on-chain `sla_hash` commits the SLA bytes
+(including the nonce), which is enough for cross-SLA replay defense at
+the SLA layer.
 
 ---
 
@@ -389,11 +397,20 @@ What each role must trust, and what is content-addressed (no trust):
 | `oracle_authority` choice | Trust the oracle | The buyer chose this oracle; if it lies, the on-chain `resolution_hash` lets a third party prove it. Recourse is operator reputation, not the chain. |
 | pr402's `slaHash` field | Trust pr402 | pr402 only relays; it doesn't author SLA bytes. The on-chain `Payment.sla_hash` is the buyer's own commitment via signing. |
 
-The protocol's only single-point-of-trust is the chosen oracle. Wave A's
-cross-payment replay protection (tx-signature uniqueness, delivery-hash
-uniqueness) shifts power back to "anyone can detect a faulty oracle";
-Wave B's `buyer_nonce` shifts power back to "no two buyers can be
-attacked with the same SLA template."
+The protocol's only single-point-of-trust is the chosen oracle. Two
+properties limit that trust:
+
+1. **Cross-payment replay protection** — the same `tx_signature`
+   (`onchain-transfer`) or `delivery_hash` (`file-delivery`) cannot
+   settle two different payments. A faulty seller is detected by the
+   oracle on the second attempt; a faulty oracle that ignores the rule
+   is detected by any third party recomputing `resolution_hash` from the
+   on-chain envelope.
+2. **Per-payment buyer_nonce** — when the SLA carries a nonce, no two
+   buyers can be attacked with the same SLA template (their hashes
+   differ even if every other byte matches). A seller who tries to
+   replay evidence from one buyer against another is caught at
+   evaluation.
 
 ---
 
@@ -404,14 +421,14 @@ attacked with the same SLA template."
 | Buyer authors SLA, never sends to seller | nobody | n/a | No payment was made — nothing to recover. |
 | Seller uploads SLA bytes that differ from buyer's | buyer | After hash returned by registry mismatches local hash. | Buyer aborts before signing FundPayment. |
 | Buyer signs FundPayment, never gets delivery | buyer | After `expires_at` | `RefundPayment` returns escrow to buyer. |
-| Seller submits stale evidence (taken before payment) | oracle | At evaluation; rejects with freshness code (Wave A §1.1). | `RefundPayment` after `expires_at` (or anyone calls Refund after Reject). |
-| Seller reuses one tx for two payments (`onchain-transfer`) | oracle | At evaluation of the second payment; rejects with `TRANSFER_TX_SIGNATURE_REUSED` (265). | `RefundPayment` after `expires_at`. |
-| Seller reuses one blob for two payments (`file-delivery`) | oracle | At evaluation of the second payment; rejects with `BLOB_DELIVERY_HASH_REUSED` (325). | Same. |
-| Oracle goes offline | buyer | Delivery sits without verdict; `expires_at` passes. | `RefundPayment`. (Wave A §3.2: pr402's optional health gate refuses to bind to oracles known-offline at build time.) |
+| Seller submits stale evidence (taken before payment) | oracle | At evaluation; rejected because `evidence.timestamp < Payment.created_at`. | `RefundPayment` after `expires_at` (or anyone calls Refund after Reject). |
+| Seller reuses one tx for two payments (`onchain-transfer`) | oracle | At evaluation of the second payment; rejected because the `tx_signature` was already settled for a different `payment_uid`. | `RefundPayment` after `expires_at`. |
+| Seller reuses one blob for two payments (`file-delivery`) | oracle | At evaluation of the second payment; rejected because the `delivery_hash` was already settled for a different `payment_uid`. | Same. |
+| Oracle goes offline | buyer | Delivery sits without verdict; `expires_at` passes. | `RefundPayment`. (When the pr402 health gate is enabled, pr402 refuses to bind to oracles that were known-offline at build time, returning HTTP 503.) |
 | Oracle returns wrong verdict | third-party auditor | Recompute `resolution_hash` from SLA + evidence + verdict envelope; compare to on-chain. | Off-chain dispute via operator reputation. The protocol does not currently support on-chain dispute. |
 | pr402 returns a tampered `slaHash` | buyer | Buyer hashes locally; mismatch with what they hand to seller. | Buyer aborts. |
 | Buyer tries to fund with wrong oracle | pr402 | At build time: `oracleAuthority` not in `accepted.extra.oracleAuthorities[]` → 400. | Buyer fixes their request. |
-| Wave A.5 health gate ON, oracle unhealthy | pr402 | At build time: returns 503 `oracle_unhealthy`. | Buyer retries against another profile in `oracleProfiles[]`. |
+| pr402 health gate enabled, oracle unhealthy | pr402 | At build time: returns HTTP 503 `oracle_unhealthy`. | Buyer retries against another profile in `oracleProfiles[]`. |
 
 ---
 
@@ -423,30 +440,23 @@ The protocol's identity is the `profile_id`:
 **Profile bumps** (`v1` → `v2`):
 - Required when the SLA or evidence wire shape changes in a way that
   breaks old evaluators (e.g. adding a required field that v1
-  evaluators wouldn't compute).
-- Wave-A and Wave-B fields were a *one-time* shape change because the
-  ecosystem had no production sellers yet. Future required-field
-  additions WILL bump the version.
+  evaluators wouldn't compute, or removing a field v1 relied on).
 - Each version has its own `NORMATIVE.md` and is registered as a
-  separate profile in pr402.
-
-**Wave bumps** (`Wave A` / `Wave B` markers in code comments):
-- Internal milestones for the security-hardening waves; they do NOT
-  appear in `profile_id`. Older clients reading newer SLA bytes simply
-  see fields they don't recognize (`#[serde(default)]`).
-- Wave-A fields (`payment.created_at`, `delivery_cutoff_seconds`,
-  `oracle_evidence_keys`) are populated by the chain monitor and worker;
-  no SLA shape change.
-- Wave-B fields (`payment_uid`, `buyer_nonce`) DO appear in SLA / Evidence
-  shapes and were a breaking change pre-production; they're now part of
-  v1.
+  separate profile in pr402. v1 and v2 may coexist; buyers and sellers
+  declare which they speak via `accepts[].extra.oracleProfiles[]` and
+  the `profile_id` field of the SLA.
+- **Older clients reading newer SLA bytes** see optional fields they
+  don't recognize and can ignore them safely (`#[serde(default)]` is
+  the wire-format guarantee). Required fields, by contrast, can only
+  appear in a version bump.
 
 **Protocol version** (top of this doc):
-- Bumps when the cross-actor flow itself changes (e.g. adding a new
-  phase or moving who authors what). Independent from any code version.
-- Wave-A internal hardening did not require a protocol bump.
-- Wave-B (buyer-authors-SLA) shifted authorship from seller to buyer; the
-  protocol version is `1.0`.
+- Bumps when the cross-actor flow itself changes: a new phase, a
+  reassignment of who authors what, a new on-chain instruction in the
+  happy path, etc. Independent from any code version and from any
+  profile version.
+- Profile-version bumps that don't change the cross-actor flow do NOT
+  require a protocol-version bump.
 
 ---
 
@@ -519,7 +529,11 @@ content-addressed and verifiable by anyone, anytime.
 
 ## Changelog
 
-- **1.0** (Wave A + B baseline): initial publication. Buyer-authored
-  SLA with mandatory `payment_uid`, optional `buyer_nonce`. Cross-payment
-  replay protection (Wave A §1.3 / §2.2.1). Freshness lower bound
-  (Wave A §1.1). pr402 health gate (Wave A §3.2, opt-in).
+- **1.0**: initial publication. Buyer-authored SLA with mandatory
+  `payment_uid` and optional `buyer_nonce`; cross-payment replay
+  protection (no `tx_signature` or `delivery_hash` may settle two
+  different payments); evidence-freshness lower bound (evidence
+  timestamp / observed `block_time` must be at or after
+  `Payment.created_at`); pr402 optional oracle health gate gating
+  `/capabilities` annotations and `/build-sla-escrow-payment-tx`
+  binding.

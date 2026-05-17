@@ -310,10 +310,10 @@ TOKEN="$SELLER_TOKEN"
 # }
 #
 # Note: file-delivery's evidence is the streamed *file itself*, not a JSON
-# envelope, so payment_uid / buyer_nonce binding for v1 lives in the SLA only.
-# The on-chain sla_hash already commits the SLA bytes (and the nonce by hash).
-# A future signed-delivery profile (Wave C) will add a companion JSON for
-# evidence-side echoing.
+# envelope, so payment_uid / buyer_nonce binding for this profile lives in
+# the SLA only. The on-chain sla_hash already commits the SLA bytes
+# (including the nonce, by hash), which is enough for cross-SLA replay
+# defense at the SLA layer.
 
 SLA_HASH=$(curl -fsS -X POST "$ORACLE/v1/registry/sla" \
     -H "Authorization: Bearer $TOKEN" \
