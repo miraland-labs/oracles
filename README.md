@@ -21,7 +21,7 @@ workspace; complexity lives off-chain.
 | [`docs/SLA_ESCROW_PROTOCOL.md`](docs/SLA_ESCROW_PROTOCOL.md)      | **First-time integrators start here.** Cross-actor reference for the buyer / seller / oracle / pr402 flow. |
 | [`docs/SELLER_GUIDE.md`](docs/SELLER_GUIDE.md)                    | **Sellers start here.** Three copy-paste integration recipes.          |
 | [`docs/BUYER_GUIDE.md`](docs/BUYER_GUIDE.md)                      | **Buyers start here.** How to pick an oracle and fund via pr402.       |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)                        | Full bring-up from clean Ubuntu 24.04 to production-ready oracle.      |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)                        | Bring-up runbook. Quickstart (~30 min) + production-grade additions.   |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md)                        | Day-2 ops: monitoring, incidents, rotations, backup, audit, failover. |
 | [`scripts/README.md`](scripts/README.md)                          | Smoke-test runbook for `install.sh` / `upgrade.sh` / `uninstall.sh`.   |
 | [`oracle-common/docs/PR402_CONTRACT.md`](oracle-common/docs/PR402_CONTRACT.md) | Buyer ↔ seller ↔ oracle discovery contract for `pr402`.                |

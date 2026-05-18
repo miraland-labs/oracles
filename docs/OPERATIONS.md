@@ -1,91 +1,75 @@
 # Operations Guide
 
-Day-2 runbook for the x402 oracle workspace. Covers monitoring, incident
-playbooks, rotations, backups, audits, failover, and capacity. For initial
-deployment, see [`DEPLOYMENT.md`](DEPLOYMENT.md).
+Day-2 runbook for the oracles workspace. Two paths:
 
-This guide assumes oracles installed via
-[`../scripts/install.sh`](../scripts/install.sh) on Ubuntu 24.04 with the
-templated systemd unit `oracle@<family>.service` and the aggregator
-`oracle.target`.
+- **Daily routine + incident triage** (the cheat sheet) — §1, §2, §3.
+- **Reference** (rotations, backup, audit, failover, capacity, upgrades) — §4 onward.
+
+For initial deployment see [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ---
 
-## Table of contents
+## 1. Daily routine
 
-- [Daily routine](#daily-routine)
-- [Monitoring](#monitoring)
-- [Incident playbooks](#incident-playbooks)
-- [Rotations](#rotations)
-- [Backup & restore](#backup--restore)
-- [Manual `/evaluate`](#manual-evaluate)
-- [Audit & compliance](#audit--compliance)
-- [Failover](#failover)
-- [Capacity & scaling](#capacity--scaling)
-- [Upgrades](#upgrades)
+A 5-minute morning check:
+
+```bash
+systemctl status oracle.target              # all units active?
+curl -fsS http://127.0.0.1:4020/health \    # repeat per family port
+    | jq '{status, chain_connected, websocket_connected, queue_depth, oracle_balance_lamports}'
+journalctl -u oracle@*.service --since '1 day ago' | grep -E '(WARN|ERROR)' | tail
+```
+
+If those three return clean output, you're done. If anything looks off,
+go to §3.
 
 ---
 
-## Daily routine
+## 2. Monitoring
 
-1. Skim `oracle.target` status: `systemctl status oracle.target`.
-2. Glance at `/health` for each family: `chain_connected`,
-   `websocket_connected`, `oracle_balance_lamports`, `queue_depth`.
-3. Glance at `/stats` for each family: `total_dead_letter` should be 0;
-   `total_errors` rising rapidly is the loudest signal.
-4. Tail `journalctl -u oracle@*.service --since '1 day ago' | grep -E
-   '(WARN|ERROR)'` and triage anything new.
+### What to scrape
 
-A 5-minute morning check beats a 30-minute incident triage.
+`GET /metrics` (Prometheus text format):
 
-## Monitoring
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `oracle_total_evaluated` | counter | Cumulative evaluations completed. |
+| `oracle_total_approved` / `_rejected` | counter | Cumulative verdict counts. |
+| `oracle_total_errors` | counter | Pipeline errors before settlement. |
+| `oracle_total_dead_letter` | counter | Jobs that exhausted retry budget. |
+| `oracle_total_evidence_fetch_failures` | counter | Hash-bound fetch failures (post-retry). |
+| `oracle_queue_depth` | gauge | Current monitor → worker channel depth. |
+| `oracle_websocket_connected` | gauge | 1 = connected, 0 = disconnected. |
+| `oracle_deliveries_observed` | counter | Accepted delivery events since process start. |
+| `oracle_last_seen_slot` | gauge | Highest slot observed. |
+| `oracle_uptime_seconds` | counter | Seconds since process start. |
 
-### Prometheus metrics surfaced at `GET /metrics`
+`oracle_balance_lamports` lives on `/health` (RPC-sampled, not in
+`/metrics`). Scrape `/health` separately if you want to alert on
+balance.
 
-Every family exposes the same counter set in `text/plain; version=0.0.4`:
+### Alert thresholds
 
-| Metric                              | Type    | Meaning                                                                |
-| ----------------------------------- | ------- | ---------------------------------------------------------------------- |
-| `oracle_total_evaluated`            | counter | Cumulative evaluations completed.                                      |
-| `oracle_total_approved`             | counter | Cumulative `approved=true` settlements.                                |
-| `oracle_total_rejected`             | counter | Cumulative `approved=false` settlements.                               |
-| `oracle_total_errors`               | counter | Pipeline errors before settlement.                                     |
-| `oracle_total_dead_letter`          | counter | Jobs that exhausted retry budget.                                      |
-| `oracle_total_evidence_fetch_failures` | counter | Hash-bound fetch failures (registry mirrors exhausted; post-retry).  |
-| `oracle_queue_depth`                | gauge   | Current `monitor → worker` channel depth.                              |
-| `oracle_websocket_connected`        | gauge   | 1 = connected, 0 = disconnected.                                       |
-| `oracle_deliveries_observed`        | counter | Accepted delivery events since process start.                          |
-| `oracle_last_seen_slot`             | gauge   | Highest slot observed in `logsSubscribe`.                              |
-| `oracle_uptime_seconds`             | counter | Seconds since process start.                                           |
+| Alert | Severity | Condition |
+| --- | --- | --- |
+| `oracle_websocket_connected == 0` | critical | for ≥ 5 min |
+| `oracle_balance_lamports < 0.2 SOL` | warning | sustained |
+| `oracle_balance_lamports < 0.05 SOL` | critical | sustained |
+| `oracle_total_dead_letter` increase ≥ 1 | critical | per hour |
+| `oracle_total_errors` rate > 5/min | warning | for ≥ 15 min |
+| `oracle_queue_depth > 50` | warning | for ≥ 5 min |
+| `oracle_queue_depth > 200` | critical | for ≥ 5 min |
+| `up{job="oracle"} == 0` | critical | scrape failed |
+| `last_websocket_message_at` stale > 60 s | warning | from `/health` |
+| `chain_connected == false` | critical | from `/health` |
 
-`oracle_balance_lamports` is exposed via `GET /health` only (sampled
-on-demand against the RPC) — it is not in `/metrics`. Scrape `/health`
-separately if you want to alert on balance.
-
-### Suggested alert thresholds
-
-| Alert                                              | Severity   | Condition                                               | Why                                                                |
-| -------------------------------------------------- | ---------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
-| `oracle_websocket_connected == 0`                  | critical   | for ≥ 5 min                                             | Settlements blocked; deliveries pile up.                           |
-| `oracle_balance_lamports < 200_000_000` (0.2 SOL)  | warning    | sustained                                               | Settlement TXs will start failing soon.                            |
-| `oracle_balance_lamports < 50_000_000`  (0.05 SOL) | critical   | sustained                                               | Active settlement attempts already failing.                        |
-| `oracle_total_dead_letter` increase ≥ 1            | critical   | over 1h                                                 | Jobs gave up; manual `/evaluate` or operator action required.      |
-| `oracle_total_errors` rate > 5/min                 | warning    | for ≥ 15 min                                            | Something systemic (RPC, registry, DB).                            |
-| `oracle_queue_depth > 50`                          | warning    | for ≥ 5 min                                             | Worker is falling behind chain monitor.                            |
-| `oracle_queue_depth > 200`                         | critical   | for ≥ 5 min                                             | Channel full; chain monitor will block.                            |
-| `up{job="oracle"} == 0`                            | critical   | scrape failed                                           | The process itself is down.                                        |
-| `last_websocket_message_at` stale > 60s            | warning    | from `/health`                                          | WS subscribed but RPC node not delivering — common silent failure. |
-| `chain_connected == false`                         | critical   | from `/health`                                          | RPC unreachable.                                                   |
-
-### Health probe
-
-`GET /health` returns the JSON shape:
+### Health probe shape
 
 ```json
 {
-  "status": "healthy",                              // "healthy" | "degraded"
-  "oracle_pubkey": "OracLe...",
-  "program_id": "Escr4...",
+  "status": "healthy",
+  "oracle_pubkey": "...",
+  "program_id": "...",
   "chain_connected": true,
   "websocket_connected": true,
   "last_websocket_message_at": "2026-05-17T12:34:56Z",
@@ -99,502 +83,218 @@ separately if you want to alert on balance.
 }
 ```
 
-Returns `503` when degraded — wire your load-balancer health check
-accordingly so a failing replica is taken out of rotation cleanly.
+Returns HTTP 503 when degraded — wire your load-balancer health check
+accordingly.
 
-### Dashboards
+---
 
-A minimal Grafana dashboard renders three panels per family:
+## 3. Incident triage
 
-1. **Throughput**: `rate(oracle_total_evaluated[5m])`,
-   `rate(oracle_total_approved[5m])`, `rate(oracle_total_rejected[5m])`.
-2. **Backpressure**: `oracle_queue_depth` overlay
-   `oracle_websocket_connected`.
-3. **Cost**: `oracle_balance_lamports` (raw + 24h delta).
+Look up the symptom; do the action. Most rows are oracle-specific. For
+generic Solana / Postgres / RPC issues, your team's playbooks already
+cover them.
 
-## Incident playbooks
+| Symptom | Likely cause | Action |
+| --- | --- | --- |
+| `oracle_websocket_connected = 0`, `deliveries_observed` flat | RPC dropped subscription | Confirm RPC reachable, swap `SOLANA_WS_URL`, restart. Backfill recovers missed events on boot. |
+| `oracle_total_evidence_fetch_failures` rising; `/health.registry_reachable=false` | Registry mirror down | Add a mirror to `EVIDENCE_REGISTRY_URLS` (comma-list); add a CDN in front; the bytes are content-addressed, perfect for caching. |
+| `oracle_total_dead_letter` increased | Jobs gave up after retries | See §3.1 dead-letter recovery. |
+| `oracle_balance_lamports` low | Settlement fees exhausted SOL | `solana transfer $ORACLE_PUBKEY ...`. Settler retries on `InsufficientFunds`; pending settles catch up automatically. |
+| MinIO POST returns 500 (`507 Insufficient Storage`) | Disk full | Free disk or extend volume; upload resumes without restart. Add an S3 lifecycle policy to expire blobs older than longest escrow window. |
+| `pool: timed out waiting for object` | Postgres pool exhausted | `systemctl restart oracle@<family>.service` releases connections; raise Postgres `max_connections` if you front the oracle with a high-volume registration HTTP layer. |
+| Same `payment_uid` cycling `detected → failed` | Malformed SLA bytes; seller error | By design — dead-letters after `ORACLE_DEAD_LETTER_MAX_ATTEMPTS`. Operator does not intervene. |
+| `oracle_total_errors` rate climbing, journal shows `429 Too Many Requests` | RPC rate-limit | Move to a paid RPC tier. `oracle-onchain-transfer` is the most sensitive (one `getTransaction(jsonParsed)` per delivery). |
 
-### A. WebSocket disconnect
+### 3.1 Dead-letter recovery
 
-**Symptoms**: `oracle_websocket_connected=0`, `last_websocket_message_at`
-stale, `deliveries_observed` flatline.
-
-**Diagnosis**:
-
-```bash
-sudo journalctl -u oracle@api-quality.service --since '15 minutes ago' | grep -i 'websocket\|reconnect'
-```
-
-**Common causes**:
-
-- RPC provider rate-limit triggered.
-- RPC node restarted / failed.
-- Network firewall closed.
-
-**Resolution**:
-
-1. Confirm RPC reachable: `curl -fsS $SOLANA_WS_URL` (404 is fine — means
-   reachable).
-2. Switch to a fallback RPC: edit `SOLANA_WS_URL` and `SOLANA_RPC_URL`,
-   restart with `sudo systemctl restart oracle@<family>.service`.
-3. The chain monitor's startup backfill (`ORACLE_BACKFILL_LOOKBACK_SIGNATURES`)
-   recovers any `DeliverySubmittedEvent` missed during the gap. Verify by
-   watching `deliveries_observed` rise.
-
-### B. RPC backpressure / 429 storms
-
-**Symptoms**: `oracle_total_errors` rate climbing, settlement attempts
-failing with `429 Too Many Requests` in the journal.
-
-**Resolution**:
-
-1. Move to a paid RPC tier (Helius, Triton, Jito, Quicknode).
-2. If the spike is `oracle-onchain-transfer`, this hot-path issues a
-   `getTransaction(jsonParsed)` per delivery — that family is the most
-   sensitive to rate limits.
-3. As a quick mitigation, lower `ORACLE_JOB_CHANNEL_CAPACITY` to throttle
-   ingestion; the chain monitor will block on a full queue.
-
-### C. Registry outage / fetch failures
-
-**Symptoms**: `oracle_total_evidence_fetch_failures` rising;
-`/health.registry_reachable=false`.
-
-**Diagnosis**:
-
-```bash
-curl -fsS "$EVIDENCE_REGISTRY_URL/<some-known-sha256>"
-```
-
-**Resolution**:
-
-- Set `EVIDENCE_REGISTRY_URLS` to a comma-separated mirror list — the
-  oracle tries each in order until one returns `SHA256(body) == hash`.
-- If only one mirror exists, add a CDN cache (Cloudflare, Fastly) in
-  front; the bytes are content-addressed and immutable, perfect for caching.
-- Failed jobs retry per `EVIDENCE_FETCH_MAX_RETRIES` then dead-letter
-  after `ORACLE_DEAD_LETTER_MAX_ATTEMPTS`. Recovery: see playbook D.
-
-### D. Dead-letter spike
-
-**Symptoms**: `oracle_total_dead_letter` increased.
-
-**Diagnosis**:
+Group by error to find root cause:
 
 ```sql
-SELECT payment_uid, status, attempts, last_error, updated_at
+SELECT last_error, count(*)
   FROM oracle_jobs
  WHERE status = 'dead_letter'
- ORDER BY updated_at DESC
- LIMIT 50;
+ GROUP BY last_error;
 ```
 
-**Resolution**:
+Once root cause is fixed, kick failed jobs back into the queue:
 
-1. Group by `last_error` to find the root cause.
-2. Once root cause is fixed (RPC restored, registry repaired), kick the
-   jobs back into the queue:
+```sql
+UPDATE oracle_jobs
+   SET status='detected', attempts=0, last_error=NULL,
+       locked_at=NULL, started_at=NULL, completed_at=NULL,
+       updated_at=NOW()
+ WHERE status='dead_letter'
+   AND payment_uid IN ('<uid1>', '<uid2>');
+```
 
-   ```sql
-   UPDATE oracle_jobs
-      SET status = 'detected', attempts = 0, last_error = NULL,
-          locked_at = NULL, started_at = NULL, completed_at = NULL,
-          updated_at = NOW()
-    WHERE status = 'dead_letter'
-      AND payment_uid IN ('<uid1>', '<uid2>', ...);
-   ```
+Or trigger a single payment via `POST /evaluate` (§4.3).
 
-3. Manually trigger evaluation per payment via
-   [`POST /evaluate`](#manual-evaluate); the worker will pick them up on
-   the next backfill scan otherwise.
+---
 
-### E. MinIO disk full (`oracle-file-delivery`)
+## 4. Reference
 
-**Symptoms**: registry POST returns `500`; journal shows
-`storage backend: aws-sdk-s3: 507 Insufficient Storage`.
+### 4.1 Rotations
 
-**Resolution**:
+**Bearer tokens (sellers)** — `POST /v1/registry/seller/rotate` with the
+old bearer; the response carries the new one. The old is revoked
+atomically.
 
-1. Free disk on the MinIO host or extend the volume.
-2. If the bucket is approaching capacity, consider an S3 lifecycle policy
-   to expire blobs older than the longest possible escrow window.
-3. The oracle's blob fetcher streams — restoring disk space immediately
-   re-enables uploads without restarting the binary.
+**Operator token** — generate (`openssl rand -hex 32`), hash
+(`sha256sum`), update `ORACLE_OPERATOR_TOKEN_SHA256` in the env file,
+restart, distribute the raw token via your secret manager.
 
-### F. Postgres connection exhaustion
+**Oracle keypair** (highest stakes; forward-only because in-flight
+payments are bound to the old key on-chain) —
 
-**Symptoms**: `oracle_total_errors` rising; journal shows `pool: timed out
-waiting for object`.
+1. Generate + fund a new keypair.
+2. Update pr402 advertisement to expose the new pubkey.
+3. Wait for in-flight payments on the old key to drain (longest
+   `expires_at` is your bound).
+4. Stop the binary, swap `ORACLE_KEYPAIR_PATH`, restart.
+5. Move the old key to cold backup. Don't delete.
 
-**Resolution**:
+The simplest live rollout: stand up a second binary on a new port with
+the new key, drain by switching pr402 advertisement, decom the old
+binary once its `oracle_jobs` reports zero in-flight.
 
-- The default pool is 8 connections per family (set in `main.rs`). If
-  you've front-ended the oracle with a high-volume registration HTTP
-  layer, raise the Postgres `max_connections` and/or pgbouncer.
-- For a quick mitigation: `sudo systemctl restart oracle@<family>.service`
-  releases all connections; the worker resumes from the ledger.
+**RPC endpoint** — edit `SOLANA_RPC_URL` / `SOLANA_WS_URL`, restart.
+Backfill recovers events from the brief gap.
 
-### G. Low oracle SOL balance
+### 4.2 Backup & restore
 
-**Symptoms**: `oracle_balance_lamports` warning fires; settlements start
-failing with `InsufficientFunds`.
-
-**Resolution**:
+**Postgres**:
 
 ```bash
-solana transfer "$ORACLE_PUBKEY" 5 \
-    --from /path/to/funder-keypair.json \
-    --url mainnet-beta \
-    --allow-unfunded-recipient
+PGPASSWORD='...' pg_dump -F c -f /backup/oracle_<family>_$(date +%F).dump <database>
+PGPASSWORD='...' pg_restore --clean --if-exists -d <database> /backup/<file>.dump
 ```
 
-(Use Devnet airdrop for Devnet.) The settler retries on
-`InsufficientFunds` so funded settlements catch up automatically once the
-balance is restored.
+After restore, restart the oracle binary so the in-memory dedupe set
+re-syncs from `is_terminal()`. Cron nightly, retain ≥ 30 days.
 
-### H. `oracle_lifecycle_events` log shows malformed SLA → repeating
+**MinIO** — single-node: `mc mirror oracle/oracle-blobs s3-backup/...`.
+Distributed: built-in `mc replicate` to a secondary cluster.
 
-**Symptoms**: same `payment_uid` cycling through `detected → failed →
-detected → failed`.
+**Oracle keypair** — three copies (hot on disk, warm encrypted offline,
+cold paper). Verify the offline copy quarterly with `solana-keygen
+pubkey ...`.
 
-**Resolution**: this is by design — the on-chain job exists, the SLA
-bytes are bad. The worker dead-letters after
-`ORACLE_DEAD_LETTER_MAX_ATTEMPTS`. Sellers must re-upload a corrected
-SLA, register a new payment, or wait for the on-chain expiry. Operator
-intervention is not appropriate.
+**Configuration** — `/etc/oracle/*.env` holds secrets; back up to your
+secrets manager (Vault / AWS Secrets Manager / sealed-secrets).
 
-## Rotations
+### 4.3 Manual `/evaluate`
 
-### Bearer tokens (sellers)
-
-```bash
-curl -fsS -X POST "https://oracle-api.example.com/v1/registry/seller/rotate" \
-    -H "Authorization: Bearer $OLD_BEARER" | jq .
-# Server revokes the old token and returns a new one in the same response.
-```
-
-The seller must capture the new token and update their build pipeline.
-The oracle stores only `SHA256(token)` so there's no way to recover the
-old one.
-
-### Operator token (`POST /evaluate`)
-
-1. Generate a new token: `openssl rand -hex 32`.
-2. Compute its hash: `echo -n "$NEW_TOKEN" | sha256sum`.
-3. Update `/etc/oracle/<family>.env`:
-   `ORACLE_OPERATOR_TOKEN_SHA256=<new-hex>`.
-4. Restart: `sudo systemctl restart oracle@<family>.service`.
-5. Distribute the raw token to operators via your secret-management tool.
-
-### Oracle keypair (highest-stakes rotation)
-
-The oracle's `oracle_authority` is committed at FundPayment time, so
-rotation is **forward-only** — old payments still settle to the old key.
-
-1. Generate the new keypair (§5.1 in [`DEPLOYMENT.md`](DEPLOYMENT.md)).
-2. Fund it.
-3. Update `pr402` capability advertisement to expose the **new** pubkey
-   for new payments. (See
-   [`oracle-common/docs/PR402_CONTRACT.md`](../oracle-common/docs/PR402_CONTRACT.md).)
-4. Wait for in-flight payments bound to the old key to drain (their
-   `expires_at` is the longest interval).
-5. Stop the binary, swap `ORACLE_KEYPAIR_PATH`, restart.
-6. Decommission the old key (move to cold backup, do not delete).
-
-The simplest rollout: stand up a second binary on a new port with the
-new key, drain traffic by switching pr402 advertisement, decom the old
-binary once its ledger reports zero in-flight jobs.
-
-### RPC endpoint
-
-Edit `SOLANA_RPC_URL` and `SOLANA_WS_URL`, restart. The startup backfill
-catches any deliveries observed by neither endpoint during the brief
-restart window.
-
-## Backup & restore
-
-### Postgres
-
-Per family:
-
-```bash
-PGPASSWORD='...' pg_dump -U oracle_app -h db.internal -F c \
-    -f /backup/oracle_api_quality_$(date +%F).dump \
-    oracle_api_quality
-```
-
-Cron nightly; retain ≥ 30 days; offsite copy via your backup tool.
-
-**Restore**:
-
-```bash
-PGPASSWORD='...' pg_restore -U oracle_app -h db.internal \
-    -d oracle_api_quality --clean --if-exists \
-    /backup/oracle_api_quality_2026-05-16.dump
-```
-
-After restore, restart the oracle binary so the worker re-syncs its
-in-memory dedupe `HashSet` from `is_terminal()`.
-
-### MinIO
-
-For a single-node deployment:
-
-```bash
-mc mirror oracle/oracle-blobs s3-backup/oracle-blobs-$(date +%F)
-```
-
-For distributed MinIO, use built-in `mc replicate` to a secondary cluster
-in another region.
-
-### Oracle keypair
-
-Three copies (§5.3 in [`DEPLOYMENT.md`](DEPLOYMENT.md)). Verify
-quarterly that the offline copy still decrypts and round-trips through
-`solana-keygen pubkey ...`.
-
-### Configuration files
-
-`/etc/oracle/*.env` are not in version control by design (they hold
-secrets). Back them up to your secrets manager (HashiCorp Vault, AWS
-Secrets Manager, or sealed-secret in your gitops repo).
-
-## Manual `/evaluate`
-
-Use only for incident response (replaying a failed job after fixing
-infra) or for spot-checking a specific payment. Production deployments
-**must** require `ORACLE_OPERATOR_TOKEN_SHA256`.
+For incident response (replay after fixing infra) or spot-checking a
+specific payment. Production deployments must require
+`ORACLE_OPERATOR_TOKEN_SHA256`.
 
 ```bash
 curl -fsS -X POST "https://oracle-api.example.com/evaluate" \
-    -H "Content-Type: application/json" \
     -H "Authorization: Bearer $OPERATOR_TOKEN" \
-    -d '{"payment_pubkey":"PayMeNt..."}' | jq .
+    -H "Content-Type: application/json" \
+    -d '{"payment_pubkey":"..."}' | jq .
 ```
 
-Behavior:
+- 404 = payment not assigned to this oracle authority (correct
+  fail-closed).
+- 429 = rate-limited by `ORACLE_MANUAL_EVALUATE_RATE_LIMIT` per
+  `..._WINDOW_MS` (default 30 / 60 000 ms).
+- 200 = verdict JSON.
 
-- `404` if the payment isn't assigned to this oracle authority (correct
-  fail-closed behavior).
-- `429` if the rate limit is exceeded
-  (`ORACLE_MANUAL_EVALUATE_RATE_LIMIT` per `..._WINDOW_MS`).
-- `200` with the verdict JSON otherwise.
+Every call is logged in `oracle_lifecycle_events` with
+`event='manual_evaluate'`.
 
-Every manual call is recorded in `oracle_lifecycle_events` with
-`event='manual_evaluate'` and the operator token hash in the payload.
+### 4.4 Audit & verification
 
-## Audit & compliance
+The chain commits only `resolution_hash`. Anyone holding SLA + delivery
+bytes plus the `oracle_jobs` row can independently recompute and verify
+the verdict; the recipe lives in
+[`SLA_ESCROW_PROTOCOL.md` §5](SLA_ESCROW_PROTOCOL.md#5-trust-boundaries)
+and [`design.md`](../../.kiro/specs/multi-category-oracle-architecture/design.md).
 
-### Reconstructing a verdict
+For a regulator-style audit query, the three relevant tables are
+`oracle_jobs` (job state), `oracle_verdicts` (the verdict + per-check
+detail), and `oracle_lifecycle_events` (append-only audit log). Join on
+`payment_uid`. See [the schema](../oracle-common/migrations/init.sql) for
+column definitions.
 
-For any settled payment, the full audit trail lives in three tables:
+Suggested retention: `oracle_jobs` and `oracle_verdicts` indefinitely.
+`oracle_lifecycle_events` ≥ 1 year for ops; archive older to cold
+storage if disk pressure. `oracle_artifacts` (Postgres backend only):
+purge bytes for settled jobs older than your longest escrow expiry,
+keeping rows for the audit.
 
-```sql
--- Job state at settlement time
-SELECT payment_uid, mint, amount, sla_hash, delivery_hash,
-       oracle_authority, profile_id, status, settlement_signature,
-       resolution_hash, started_at, completed_at
-  FROM oracle_jobs
- WHERE payment_uid = '<hex>';
+### 4.5 Failover
 
--- The verdict itself
-SELECT approved, resolution_reason, resolution_hash,
-       checks::jsonb,        -- per-check pass/fail
-       registry_sources,     -- which mirror returned which artifact
-       settlement_signature,
-       created_at
-  FROM oracle_verdicts
- WHERE oracle_job_id = (SELECT id FROM oracle_jobs WHERE payment_uid = '<hex>');
+Single-writer per family: exactly one binary holds the keypair and
+writes settlements at any moment. Two binaries with the same key race
+on-chain and one loses.
 
--- The append-only event log
-SELECT event, payload::jsonb, created_at
-  FROM oracle_lifecycle_events
- WHERE payment_uid = '<hex>'
- ORDER BY created_at;
-```
-
-The chain commits only `resolution_hash`. Counterparties can recompute it
-from the ledger row to verify the verdict is consistent with the
-on-chain commitment — that's what `cross_family_properties.rs` proves
-deterministically.
-
-### Counterparty verification recipe
-
-Anyone (buyer, seller, third-party auditor) holding the SLA + delivery
-bytes plus the `oracle_jobs` row can independently verify the verdict:
-
-1. Verify `SHA256(sla_bytes) == job.sla_hash` (committed on-chain).
-2. Verify `SHA256(delivery_bytes) == job.delivery_hash` (committed
-   on-chain).
-3. Re-run the same evaluator against the SLA + delivery (the spec at
-   `oracle-*/spec/*/NORMATIVE.md` is normative for v1; identical inputs
-   must produce an identical `approved` + `resolution_reason`).
-4. Recompute `compute_resolution_hash(...)` using the canonical
-   `x402/oracles/resolution-envelope/v1` recipe documented in
-   [`design.md`](../../.kiro/specs/multi-category-oracle-architecture/design.md);
-   confirm it equals `verdict.resolution_hash`.
-
-If all four pass, the verdict is reproducible — the oracle has no hidden
-state.
-
-### Retention
-
-Postgres retention is your call. Recommended:
-
-- `oracle_jobs` + `oracle_verdicts`: keep indefinitely (audit primary).
-- `oracle_lifecycle_events`: ≥ 1 year for ops; archive older to cold
-  storage if disk pressure.
-- `oracle_artifacts` (Postgres backend only): purge bytes for settled
-  jobs older than your longest escrow expiry, keeping rows for the audit.
-
-## Failover
-
-The architecture is **single-writer per family**: exactly one binary
-holds the oracle keypair and writes settlements at any moment. Running
-two binaries with the same key races on-chain (the program accepts
-exactly one settlement per `payment_uid`; the second loses).
-
-Recommended pattern:
-
-1. **Active**: full deployment, keypair on disk, `oracle@<family>.service`
-   running.
-2. **Standby**: identical host, `oracle@<family>.service` **stopped**,
-   keypair file present but mode 0000 (unreadable to the oracle user) or
-   stored offline.
-3. **Failover trigger**: active host unhealthy.
-4. **Procedure**:
-
-   ```bash
-   # On active (if reachable):
-   sudo systemctl stop oracle@api-quality.service
-
-   # On standby:
-   sudo chmod 600 /var/lib/oracle/api-quality/oracle-keypair.json
-   sudo systemctl start oracle@api-quality.service
-   sudo journalctl -u oracle@api-quality.service -f
-   ```
-
-5. Confirm `/health` returns `healthy`; verify the standby's
-   `last_seen_slot` advances.
-6. Re-image the failed host or fix the root cause; promote standby to
-   active and provision a new standby.
-
-The Postgres ledger is shared (single source of truth) so the standby
-boots with the same `oracle_jobs` view. The startup backfill recovers
-any deliveries that landed during the cutover.
-
-## Capacity & scaling
-
-### Vertical (more CPU/RAM on the same host)
-
-Rarely needed. The oracle is I/O-bound (RPC, registry fetch, Postgres) not
-compute-bound. Two cases for a vertical bump:
-
-- `oracle-file-delivery` with many concurrent large blobs — bumping RAM
-  helps the SHA-256 + reqwest streaming.
-- `oracle-onchain-transfer` with a high-throughput cluster (Mainnet) —
-  more cores let you parallelize `getTransaction(jsonParsed)` calls.
-
-### Horizontal (multiple oracles per family)
-
-The single-writer-per-keypair constraint means horizontal scaling means
-**multiple keypairs**. Sellers advertise multiple oracles (different
-`operatorPubkey`); buyers pick one. Each oracle runs independently with
-its own DB.
-
-This is the right scaling pattern for high-volume profiles: deploy `N`
-binaries with `N` keypairs, advertise all of them, let buyers' selection
-algorithm load-balance.
-
-### Triggers
-
-| Signal                                    | Action                                                |
-| ----------------------------------------- | ----------------------------------------------------- |
-| `oracle_queue_depth > 50` p95             | Investigate evaluator latency.                        |
-| Settlement P50 > 5s                       | Switch to a faster RPC tier.                          |
-| Evidence-fetch P50 > 2s                   | Add a CDN in front of the registry.                   |
-| Postgres CPU > 70% sustained              | Migrate to a beefier instance or split per-family.   |
-| MinIO ingress > 50% line-rate             | Distribute MinIO; add CDN for read.                  |
-
-## Upgrades
-
-Use `upgrade.sh` for a routine binary swap:
+Pattern: active host runs the service; standby has the keypair file
+present but mode 0000 (unreadable) and the unit stopped. Failover:
 
 ```bash
-cd oracles
-cargo build --release -p oracle-api-quality
-
-sudo ./scripts/upgrade.sh \
-    api-quality \
-    ./target/release/oracle-api-quality
+# active: stop
+sudo systemctl stop oracle@<family>.service
+# standby: enable + start
+sudo chmod 600 /var/lib/oracle/<family>/oracle-keypair.json
+sudo systemctl start oracle@<family>.service
 ```
 
-The script:
+Postgres is shared (single source of truth); the standby boots with the
+same `oracle_jobs` view. Backfill recovers any deliveries that landed
+during the cutover.
 
-1. Captures the running binary as `oracle-<family>.bak.<UTC-timestamp>`.
-2. Stages the new binary as `oracle-<family>.new` next to it.
-3. Atomic-renames the staged binary into place.
-4. Restarts the service.
-5. Probes `/health` 5×2s.
-6. Healthy → prunes old `.bak.*` files, keeping the newest `KEEP_BACKUPS=5`
-   (configurable via env). Unhealthy → leaves the binary in place and exits
-   non-zero with a manual rollback command in stderr.
+### 4.6 Capacity
 
-For unattended deploys (CI / blue-green), pass `--auto-rollback` (or set
-`AUTO_ROLLBACK=1`) so a failed health probe restores the most recent backup
-and restarts automatically:
+The oracle is I/O-bound, not compute-bound. When to act:
+
+| Signal | Action |
+| --- | --- |
+| `queue_depth` p95 > 50 | Investigate evaluator latency. |
+| Settlement P50 > 5 s | Faster RPC tier. |
+| Evidence-fetch P50 > 2 s | Add a CDN in front of the registry. |
+| Postgres CPU > 70% sustained | Beefier instance, or split per-family. |
+| MinIO ingress > 50% line-rate | Distribute MinIO; add CDN for read. |
+
+Horizontal scaling means **multiple keypairs** (sellers advertise
+several oracles, buyers pick one). Each oracle runs independently with
+its own DB. This is the right pattern for high-volume profiles; vertical
+scaling rarely is.
+
+### 4.7 Upgrades
 
 ```bash
-sudo ./scripts/upgrade.sh api-quality \
-    ./target/release/oracle-api-quality --auto-rollback
+cargo build --release -p oracle-<family>
+sudo ./scripts/upgrade.sh <family> ./target/release/oracle-<family>
 ```
 
-Exit codes:
+The script captures the running binary, stages the new one,
+atomic-renames into place, restarts, and probes `/health` 5×2 s. Healthy
+prunes old `.bak.*` (keeping `KEEP_BACKUPS=5`); unhealthy leaves the
+binary in place and exits non-zero with a manual rollback hint.
 
-| Code | Meaning                                                   |
-| ---- | --------------------------------------------------------- |
-| 0    | Upgrade succeeded; old backups pruned per `KEEP_BACKUPS`. |
-| 1    | Upgrade unhealthy; manual rollback required.              |
-| 2    | Auto-rollback completed; old binary restored.             |
-| 3    | Auto-rollback FAILED; manual intervention required.       |
+For unattended deploys: `--auto-rollback` (or `AUTO_ROLLBACK=1`)
+restores the most recent backup and restarts on health failure.
 
-> **Operational note.** Backups are kept at
-> `/opt/oracle/<family>/oracle-<family>.bak.<UTC-ts>`. Tune retention with
-> `KEEP_BACKUPS` (default 5) or set `KEEP_BACKUPS=0` to keep all backups.
+Exit codes: 0 = ok, 1 = unhealthy (manual rollback), 2 = auto-rollback
+done, 3 = auto-rollback failed.
 
-Migration upgrades (schema changes) are out of scope for this workspace
-in v1 — the schema is frozen and `init.sql` is idempotent. Future
-breaking changes will ship a versioned `migrations/<timestamp>__*.sql`
-companion.
+Migration upgrades (schema changes) are out of scope in v1 — the schema
+is frozen and `init.sql` is idempotent. Future breaking changes will
+ship a versioned `migrations/<timestamp>__*.sql` companion.
 
-### Pre-upgrade checklist
+**Pre-upgrade**: tests pass on source; ledger backed up in last 24h;
+standby on same version.
 
-- [ ] `cargo test --workspace` passes locally on the upgrade source.
-- [ ] `oracle-common/docs/PR402_CONTRACT.md` unchanged (or change
-      announced to seller integrations).
-- [ ] Ledger backup in the last 24h (§Backup & restore).
-- [ ] Standby host on the same binary version (so failover is symmetric).
+**Post-upgrade**: `/health` healthy within 30 s; one successful
+settlement (or a manual `/evaluate` smoke test); no new ERROR lines.
 
-### Post-upgrade verification
-
-- [ ] `/health` returns `healthy` within 30 s.
-- [ ] One successful settlement in the journal (or a manual `/evaluate`
-      smoke test).
-- [ ] No new `ERROR` lines in `journalctl --since '5 minutes ago'`.
-- [ ] `cargo test --workspace --no-default-features` ledger schema
-      compatibility check (against your real DB) is green.
-
-If anything fails, **rollback** (`### Rollback`):
+**Manual rollback**:
 
 ```bash
-# Latest backup is at /opt/oracle/<family>/oracle-<family>.bak.<UTC-ts>
-LATEST_BACKUP=$(ls -1t /opt/oracle/api-quality/oracle-api-quality.bak.* | head -n 1)
-sudo systemctl stop oracle@api-quality.service
-sudo cp -p "$LATEST_BACKUP" /opt/oracle/api-quality/oracle-api-quality
-sudo chown oracle:oracle /opt/oracle/api-quality/oracle-api-quality
-sudo systemctl start oracle@api-quality.service
+LATEST=$(ls -1t /opt/oracle/<family>/oracle-<family>.bak.* | head -n 1)
+sudo systemctl stop oracle@<family>.service
+sudo cp -p "$LATEST" /opt/oracle/<family>/oracle-<family>
+sudo systemctl start oracle@<family>.service
 ```
-
-Or skip the manual restore and use the auto-rollback flag on the next
-upgrade attempt: `sudo ./scripts/upgrade.sh api-quality <path-to-known-good>
---auto-rollback`.
