@@ -21,9 +21,7 @@ Pick one of the three patterns before provisioning:
 | **Hybrid**                   | api-quality on shared host, file-delivery on its own (large blobs)  | Mixed ops complexity                          |
 
 In all three patterns each oracle binary holds **its own** keypair and
-Postgres database — that's a hard design constraint (per
-[`design.md` §C7, §Per-Family Postgres Isolation](../../.kiro/specs/multi-category-oracle-architecture/design.md))
-and keeps the blast radius bounded.
+Postgres database — that's a hard design constraint in order to keep the blast radius bounded.
 
 ## 2. Prerequisites
 
