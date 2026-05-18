@@ -46,6 +46,21 @@ pub struct ExpectedTransfer {
     pub recipient_owner: String,
     pub min_amount: String,
     pub direction: TransferDirection,
+    /// OPTIONAL. Base58 pubkey of the source wallet. When set, the oracle
+    /// verifies that the same `(mint, sender_owner)` pair appears in
+    /// `pre_token_balances` AND that the signed delta for the sender row is
+    /// negative (sender lost tokens) with magnitude at least `min_amount`.
+    /// When unset, the sender check is skipped entirely (back-compat for
+    /// SLAs authored before this field existed).
+    ///
+    /// This is defense-in-depth on top of cross-payment replay protection:
+    /// it pins which wallet the tokens came from, not just where they
+    /// landed. A buyer who knows the seller's treasury wallet
+    /// (e.g. AetherVane's Zodiac mint custody account) can pin it here so
+    /// a third party who somehow constructed valid recipient-side evidence
+    /// cannot bind their own historical transfer to this payment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

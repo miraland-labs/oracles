@@ -121,6 +121,7 @@ The SLA document MUST validate against
 | `expected_transfers[].recipient_owner`       | base58 `string`     | yes      | Owner pubkey of the destination ATA (NOT the ATA itself).                                                                   |
 | `expected_transfers[].min_amount`            | decimal `string`    | yes      | Minimum **raw** token amount; compared to `|post − pre|`.                                                                   |
 | `expected_transfers[].direction`             | `"in"` \| `"out"`   | yes      | Direction relative to `recipient_owner`.                                                                                    |
+| `expected_transfers[].sender_owner`          | base58 `string`     | optional | When set, the oracle verifies the same `(mint, sender_owner)` pair appears in `pre_token_balances` and the sender's signed delta is negative with magnitude ≥ `min_amount`. Defense-in-depth on top of cross-payment replay protection. |
 | `swap_router`                                | base58 `string`     | optional | Recorded but not enforced in v1.                                                                                            |
 | `slippage_bps`                               | `u16`               | optional | Recorded but not enforced in v1.                                                                                            |
 | `deadline_unix`                              | `i64`               | optional | If set and `meta.block_time > deadline_unix`, reject (`Custom(260)`).                                                       |
@@ -170,6 +171,21 @@ Given validated SLA `S` and evidence `E`, the oracle:
      → reject `Custom(263)` (`TransferDirectionMismatch`).
    - Check magnitude: `|delta| >= min_amount`. Insufficient
      → reject `Custom(258)` (`TransferAmountInsufficient`).
+   - **(Optional)** If `S.expected_transfers[i].sender_owner` is set:
+     - Find `(mint, sender_owner)` in `meta.preTokenBalances`. Missing
+       → reject `Custom(269)` (`TransferSenderMismatch`).
+     - Compute `sender_delta = sender_post.amount − sender_pre.amount`,
+       treating an absent post-row as `0` (the sender drained their
+       balance).
+     - Require `sender_delta < 0` AND `|sender_delta| >= min_amount`.
+       Failure of either condition → reject `Custom(269)`. The
+       diagnostic detail string distinguishes the no-row, wrong-
+       direction, and insufficient-magnitude cases.
+     - Note: the sender's `|delta|` MAY exceed the recipient's `|delta|`
+       on Token-2022 mints with a transfer-fee extension. The check uses
+       `min_amount` as the floor for both sides independently, so a
+       small fee gap does not cause false rejects as long as both
+       sides clear the floor. See §6.1.
 
 If every `expected_transfers[]` entry passes, the verdict is **approved**
 with reason `0` (`ResolutionReason::None`).
@@ -177,6 +193,91 @@ with reason `0` (`ResolutionReason::None`).
 The first failing check in the above order determines the rejection reason
 (P-VER-2). The `expected_transfers` array is iterated in declaration order;
 the first failing entry's reason wins.
+
+### 6.1 Token-2022 transfer-fee handling
+
+Mints owned by the **plain SPL Token** program
+(`TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`) have no transfer-fee
+extension, so the recipient receives exactly what the sender sent. For
+those mints the buyer's `min_amount` and the sender's debit are
+equal, and there is nothing more to think about.
+
+Mints owned by **Token-2022**
+(`TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`) MAY carry a
+transfer-fee extension that withholds a basis-points share of every
+transfer. The fee is computed at the program level and credited to the
+mint's withheld-fee account; the recipient's balance gains only the
+**post-fee net** amount.
+
+Two facts the buyer and seller MUST internalize:
+
+1. The oracle reads `meta.postTokenBalances` from
+   `getTransaction(jsonParsed)`. Solana's RPC reports balances *after*
+   any Token-2022 fee was withheld, so the **delta the oracle sees on
+   the recipient row is already net**. The check
+   `|recipient_delta| >= min_amount` therefore compares the buyer's
+   declared minimum to what the recipient actually receives, not to
+   what the sender debited.
+
+2. When `expected_transfers[i].sender_owner` is set, the oracle's
+   sender-side check (§6, step 4, optional) requires
+   `|sender_delta| >= min_amount`. The sender's gross debit is at
+   least the recipient's net credit (the fee comes out of what the
+   sender sent), so a sender-pinned check passes whenever the
+   recipient-pinned check passes — provided the buyer's `min_amount`
+   reflects post-fee expectations as described below.
+
+**Authoring rule for the buyer.** When the mint has a transfer-fee
+extension, set `min_amount` to the **post-fee amount the recipient
+will receive**, NOT the gross amount the seller debits. Otherwise
+honest deliveries will be rejected with `Custom(258)`
+(`TransferAmountInsufficient`).
+
+**Worked example.** A Token-2022 mint with a 150-bps (1.5%) transfer
+fee. The buyer wants the recipient to net 1,000,000 raw units. The
+seller will need to send a gross amount such that `gross × (1 -
+0.015) ≥ 1_000_000`, i.e. `gross ≥ 1_015_229` (rounded up to the
+nearest raw integer). The buyer's SLA SHOULD declare:
+
+```json
+"min_amount": "1000000"
+```
+
+A delivery that sends 1,015,229 raw → recipient nets 1,000,001 →
+recipient_delta = 1,000,001 ≥ min_amount = 1,000,000 → **approve**.
+
+A buyer who instead declared `"min_amount": "1015229"` (the gross
+figure) would see the same honest delivery **reject** with
+`TransferAmountInsufficient` because the recipient's net delta of
+1,000,001 falls below the declared 1,015,229.
+
+**Authoring rule for the seller.** Before broadcasting, query the
+mint to discover whether a fee extension is present:
+
+```bash
+spl-token display <MINT_ADDRESS>
+```
+
+If the output shows a `Transfer fee` line with a non-zero rate, you
+are in the Token-2022 fee path. Compute the gross amount that, after
+fee withholding, lands at least `min_amount` at the recipient. Going
+under the floor → reject. Going just over → approve and your
+recipient receives slightly more than the buyer's minimum.
+
+**Why the oracle does not auto-adjust.** The fee rate is a
+mint-configurable parameter that can change over time
+(`SetTransferFee`). Hard-coding "the oracle adds 1.5% headroom"
+would be wrong as soon as the rate moved. Pushing the math to the
+buyer keeps the oracle's check rule simple, deterministic, and
+reproducible by any third-party auditor recomputing
+`resolution_hash`.
+
+The sender-side check (`sender_owner`, §6 step 4 optional) uses the
+same `min_amount` floor on `|sender_delta|`. On a fee-bearing mint
+the sender's debit is **strictly greater** than the recipient's
+credit, so any `min_amount` that satisfies the recipient also
+satisfies the sender by construction. There is no special
+authoring rule for the sender side beyond what's already covered.
 
 ---
 

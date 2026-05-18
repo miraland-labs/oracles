@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "profile_id": "x402/oracles/onchain-transfer/v1",
+  "payment_uid": "0000000000000000000000000000000000000000000000000000000000000001",
+  "buyer_nonce": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+  "cluster": "mainnet-beta",
+  "expected_transfers": [
+    {
+      "mint": "AetherVanePiscesMintAddressXXXXXXXXXXXXXXXX",
+      "recipient_owner": "BuyerSpecifiedRecipientWalletAddressXXXXXXXX",
+      "min_amount": "1000000000",
+      "direction": "in",
+      "sender_owner": "AetherVaneZodiacTreasuryWalletXXXXXXXXXXXXX"
+    }
+  ]
+}

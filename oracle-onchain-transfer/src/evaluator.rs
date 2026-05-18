@@ -390,6 +390,71 @@ pub fn verify_observed_transfer(
             );
         }
 
+        // Production-hardening §1: optional sender pinning. Two failure
+        // modes share TRANSFER_SENDER_MISMATCH (269); the diagnostic
+        // detail string distinguishes them. Skipped entirely when
+        // `sender_owner` is unset (back-compat for SLAs authored before
+        // this field existed).
+        if let Some(sender_owner) = expected.sender_owner.as_deref() {
+            // Find the sender row in pre-balances. The sender MUST appear in
+            // pre-balances (they had tokens to lose); whether they appear in
+            // post-balances depends on whether they had any balance left.
+            let sender_pre = find_balance(
+                &observation.pre_token_balances,
+                &expected.mint,
+                sender_owner,
+            );
+            let sender_pre_amount = match sender_pre {
+                Some(b) => parse_amount_or_zero(&b.amount),
+                None => {
+                    return reject(
+                        onchain_transfer::TRANSFER_SENDER_MISMATCH,
+                        &format!("expected_transfer[{idx}]"),
+                        &format!(
+                            "no pre_token_balance for sender (mint={}, owner={})",
+                            expected.mint, sender_owner
+                        ),
+                    );
+                }
+            };
+            let sender_post_amount = find_balance(
+                &observation.post_token_balances,
+                &expected.mint,
+                sender_owner,
+            )
+            .map(|b| parse_amount_or_zero(&b.amount))
+            .unwrap_or(0i128); // sender drained their balance entirely → no post row.
+            let sender_delta: i128 = sender_post_amount - sender_pre_amount;
+            // Sender must have a strictly negative delta (lost tokens) with
+            // magnitude at least `min_amount`. We do NOT require the sender's
+            // delta magnitude to equal the recipient's (Token-2022 transfer
+            // fees can introduce a small gap), only that it's at least the
+            // minimum the buyer expected to receive.
+            if sender_delta >= 0 {
+                return reject(
+                    onchain_transfer::TRANSFER_SENDER_MISMATCH,
+                    &format!("expected_transfer[{idx}]"),
+                    &format!(
+                        "sender delta {sender_delta} >= 0; expected negative magnitude >= {min_amount} \
+                         (sender pre={sender_pre_amount}, post={sender_post_amount}, mint={}, owner={sender_owner})",
+                        expected.mint
+                    ),
+                );
+            }
+            if sender_delta.unsigned_abs() < min_amount {
+                return reject(
+                    onchain_transfer::TRANSFER_SENDER_MISMATCH,
+                    &format!("expected_transfer[{idx}]"),
+                    &format!(
+                        "|sender_delta|={} < min_amount={min_amount} \
+                         (sender pre={sender_pre_amount}, post={sender_post_amount}, mint={}, owner={sender_owner})",
+                        sender_delta.unsigned_abs(),
+                        expected.mint
+                    ),
+                );
+            }
+        }
+
         checks.push(CheckResult {
             name: format!("expected_transfer[{idx}]"),
             passed: true,
@@ -545,6 +610,7 @@ mod tests {
                 recipient_owner: "OWNER1".into(),
                 min_amount: min.into(),
                 direction,
+                sender_owner: None,
             }],
             swap_router: None,
             slippage_bps: None,
@@ -718,6 +784,7 @@ mod tests {
             recipient_owner: "OWNER2".into(),
             min_amount: "1".into(),
             direction: TransferDirection::In,
+            sender_owner: None,
         });
         let observation = obs(
             false,
@@ -911,6 +978,175 @@ mod tests {
     fn buyer_nonce_mismatch_constant_in_range() {
         assert_eq!(onchain_transfer::TRANSFER_BUYER_NONCE_MISMATCH, 267);
         assert!(onchain_transfer::RANGE.contains(&onchain_transfer::TRANSFER_BUYER_NONCE_MISMATCH));
+    }
+
+    // -------------------------------------------------------------------------
+    // Production-hardening §1 — optional sender pinning
+    // -------------------------------------------------------------------------
+
+    /// Helper: build an SLA whose single expected_transfer pins `sender_owner`.
+    fn sla_with_sender(
+        direction: TransferDirection,
+        min: &str,
+        sender_owner: Option<&str>,
+    ) -> TransferSla {
+        let mut sla = sla_basic(direction, min);
+        sla.expected_transfers[0].sender_owner = sender_owner.map(|s| s.to_string());
+        sla
+    }
+
+    #[test]
+    fn sender_set_correct_approves() {
+        // Sender pre=5_000_000, post=4_000_000 → delta=-1_000_000 (loss);
+        // recipient pre=0, post=1_000_000 → delta=+1_000_000 (gain);
+        // min_amount=1_000_000 → both magnitudes match → approve.
+        let sla = sla_with_sender(TransferDirection::In, "1000000", Some("SENDER1"));
+        let observation = obs(
+            false,
+            None,
+            vec![
+                bal("MINT1", "SENDER1", "5000000"),
+                bal("MINT1", "OWNER1", "0"),
+            ],
+            vec![
+                bal("MINT1", "SENDER1", "4000000"),
+                bal("MINT1", "OWNER1", "1000000"),
+            ],
+        );
+        let r = verify_observed_transfer(&sla, &observation, None);
+        assert!(
+            r.approved,
+            "must approve when sender check passes: {:?}",
+            r.checks
+        );
+        assert_eq!(r.resolution_reason, 0);
+    }
+
+    #[test]
+    fn sender_set_missing_pre_row_rejects() {
+        // Recipient side is fine, but the SLA pins SENDER_X who has no
+        // pre-row at all. Reject with TRANSFER_SENDER_MISMATCH (269), with
+        // the diagnostic detail naming the missing-row case.
+        let sla = sla_with_sender(TransferDirection::In, "1000000", Some("SENDER_X"));
+        let observation = obs(
+            false,
+            None,
+            vec![bal("MINT1", "OWNER1", "0")],
+            vec![bal("MINT1", "OWNER1", "2000000")],
+        );
+        let r = verify_observed_transfer(&sla, &observation, None);
+        assert!(!r.approved);
+        assert_eq!(
+            r.resolution_reason,
+            onchain_transfer::TRANSFER_SENDER_MISMATCH
+        );
+        let failure = r.checks.iter().find(|c| !c.passed).unwrap();
+        assert!(
+            failure.detail.contains("no pre_token_balance for sender"),
+            "expected missing-row diagnostic, got: {}",
+            failure.detail,
+        );
+    }
+
+    #[test]
+    fn sender_set_wrong_direction_rejects() {
+        // Sender pinned but their delta is non-negative: pre=1_000_000,
+        // post=1_000_000 → delta=0. The recipient side gained tokens (so the
+        // recipient checks pass), but the sender's "wallet" did not actually
+        // lose any. Reject with TRANSFER_SENDER_MISMATCH; diagnostic mentions
+        // the >=0 path.
+        let sla = sla_with_sender(TransferDirection::In, "1000000", Some("SENDER1"));
+        let observation = obs(
+            false,
+            None,
+            vec![
+                bal("MINT1", "SENDER1", "1000000"),
+                bal("MINT1", "OWNER1", "0"),
+            ],
+            vec![
+                // Sender's balance is unchanged; recipient still gained.
+                bal("MINT1", "SENDER1", "1000000"),
+                bal("MINT1", "OWNER1", "2000000"),
+            ],
+        );
+        let r = verify_observed_transfer(&sla, &observation, None);
+        assert!(!r.approved);
+        assert_eq!(
+            r.resolution_reason,
+            onchain_transfer::TRANSFER_SENDER_MISMATCH
+        );
+        let failure = r.checks.iter().find(|c| !c.passed).unwrap();
+        assert!(
+            failure.detail.contains(">= 0; expected negative magnitude"),
+            "expected wrong-direction diagnostic, got: {}",
+            failure.detail,
+        );
+    }
+
+    #[test]
+    fn sender_unset_back_compat_skips_check() {
+        // SLAs authored before this field existed leave it None. The
+        // sender-side data in the observation is irrelevant; the recipient
+        // checks are the only thing that gates approval. Confirms the back-
+        // compat invariant from Requirement 1.2.
+        let sla = sla_with_sender(TransferDirection::In, "1000000", None);
+        let observation = obs(
+            false,
+            None,
+            vec![bal("MINT1", "OWNER1", "0")],
+            vec![bal("MINT1", "OWNER1", "2000000")],
+        );
+        let r = verify_observed_transfer(&sla, &observation, None);
+        assert!(
+            r.approved,
+            "must approve when sender_owner is unset: {:?}",
+            r.checks
+        );
+        assert_eq!(r.resolution_reason, 0);
+    }
+
+    #[test]
+    fn sender_set_insufficient_magnitude_rejects() {
+        // Sender pre=1_000_500, post=1_000_000 → |delta|=500 < min_amount=1000.
+        // Even though the sender lost tokens (correct direction), the
+        // magnitude is below threshold. This case is the second of the two
+        // wrong-direction-or-magnitude failures both sharing
+        // TRANSFER_SENDER_MISMATCH. Recipient side sees a delta of 1_000_000
+        // (>= min_amount), so the recipient checks pass — only the sender
+        // check rejects, which lets us isolate the magnitude branch.
+        // Note: this test reveals a subtle point that real Token-2022
+        // transfer fees might trip; documented in NORMATIVE §6.2 (Task 2).
+        let sla = sla_with_sender(TransferDirection::In, "1000", Some("SENDER1"));
+        let observation = obs(
+            false,
+            None,
+            vec![
+                bal("MINT1", "SENDER1", "1000500"),
+                bal("MINT1", "OWNER1", "0"),
+            ],
+            vec![
+                bal("MINT1", "SENDER1", "1000000"),
+                bal("MINT1", "OWNER1", "1000000"),
+            ],
+        );
+        let r = verify_observed_transfer(&sla, &observation, None);
+        assert!(!r.approved);
+        assert_eq!(
+            r.resolution_reason,
+            onchain_transfer::TRANSFER_SENDER_MISMATCH
+        );
+        let failure = r.checks.iter().find(|c| !c.passed).unwrap();
+        assert!(
+            failure.detail.contains("|sender_delta|"),
+            "expected magnitude diagnostic, got: {}",
+            failure.detail,
+        );
+    }
+
+    #[test]
+    fn sender_mismatch_constant_in_range() {
+        assert_eq!(onchain_transfer::TRANSFER_SENDER_MISMATCH, 269);
+        assert!(onchain_transfer::RANGE.contains(&onchain_transfer::TRANSFER_SENDER_MISMATCH));
     }
 
     #[test]

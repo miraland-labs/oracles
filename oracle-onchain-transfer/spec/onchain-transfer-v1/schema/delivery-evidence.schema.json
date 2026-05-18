@@ -2,7 +2,14 @@
   "title": "x402/oracles/onchain-transfer/v1 delivery evidence",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "profile_id", "tx_signature", "asserted_transfers", "submitted_at"],
+  "required": [
+    "version",
+    "profile_id",
+    "tx_signature",
+    "asserted_transfers",
+    "submitted_at",
+    "payment_uid"
+  ],
   "properties": {
     "version": { "const": 1 },
     "profile_id": { "const": "x402/oracles/onchain-transfer/v1" },
@@ -21,6 +28,16 @@
         }
       }
     },
-    "submitted_at": { "type": "integer" }
+    "submitted_at": { "type": "integer" },
+    "payment_uid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded 32-byte payment_uid echoed verbatim from the SLA the seller is fulfilling."
+    },
+    "buyer_nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "description": "Optional hex-encoded 32-byte buyer_nonce echoed from the SLA when present."
+    }
   }
 }

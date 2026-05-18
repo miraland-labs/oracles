@@ -100,6 +100,16 @@ Use these rules of thumb:
    the operators, hit `GET https://<your-pr402>/api/v1/facilitator/capabilities`
    and see if it advertises a `slaEscrowDefaultOracle` for the profile
    — that's the deployment's recommended default.
+5. **For token-transfer scenarios specifically**: pr402 ships and
+   operates a built-in `oracle-onchain-transfer` instance. It appears
+   in `slaEscrowOracleProfiles[]` with profile id
+   `x402/oracles/onchain-transfer/v1` whenever the deployment has the
+   built-in oracle enabled. If the seller doesn't advertise their own,
+   the built-in is a sensible default — your trust in it is your trust
+   in the pr402 operator. For other profiles (api-quality,
+   file-delivery), prefer an oracle the seller advertises in their
+   HTTP-402 challenge; pr402 reviews ecosystem oracles editorially but
+   does not operate them.
 
 For most simple buyers: pick `oracleProfiles[0].operatorPubkey` and
 move on.

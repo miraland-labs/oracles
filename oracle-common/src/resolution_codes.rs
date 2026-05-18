@@ -38,6 +38,20 @@ pub mod onchain_transfer {
     /// Wave A §2.2.2 — `block_time` is missing from RPC metadata and the
     /// evaluator is in strict-mandatory-blocktime mode.
     pub const TRANSFER_BLOCK_TIME_MISSING: u16 = 268;
+    /// Production-hardening §1 — SLA pinned a `sender_owner` and one of two
+    /// failure modes occurred:
+    ///
+    /// 1. No matching `(mint, sender_owner)` row was found in the
+    ///    transaction's `pre_token_balances`.
+    /// 2. The matching row was found but the sender's signed delta was
+    ///    non-negative (sender gained or stayed flat instead of losing
+    ///    tokens).
+    ///
+    /// The two paths share this code; the diagnostic detail string in the
+    /// `CheckResult` distinguishes them. Defense-in-depth on top of
+    /// cross-payment replay protection: it pins which wallet the tokens
+    /// came from, not just where they landed.
+    pub const TRANSFER_SENDER_MISMATCH: u16 = 269;
 
     pub const RANGE: std::ops::RangeInclusive<u16> = 256..=319;
 }
@@ -105,6 +119,7 @@ mod tests {
             onchain_transfer::TRANSFER_PAYMENT_UID_MISMATCH,
             onchain_transfer::TRANSFER_BUYER_NONCE_MISMATCH,
             onchain_transfer::TRANSFER_BLOCK_TIME_MISSING,
+            onchain_transfer::TRANSFER_SENDER_MISMATCH,
         ] {
             assert!(onchain_transfer::RANGE.contains(&code));
         }

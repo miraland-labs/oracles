@@ -2,10 +2,26 @@
   "title": "x402/oracles/onchain-transfer/v1 SLA document",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "profile_id", "cluster", "expected_transfers"],
+  "required": [
+    "version",
+    "profile_id",
+    "payment_uid",
+    "cluster",
+    "expected_transfers"
+  ],
   "properties": {
     "version": { "const": 1 },
     "profile_id": { "const": "x402/oracles/onchain-transfer/v1" },
+    "payment_uid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded 32-byte payment_uid from the on-chain Payment this SLA is bound to."
+    },
+    "buyer_nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "description": "Optional hex-encoded 32-byte fresh random nonce. Defends cross-SLA replay across two buyers with otherwise-identical SLA terms."
+    },
     "cluster": { "enum": ["mainnet-beta", "devnet", "testnet"] },
     "expected_transfers": {
       "type": "array",
@@ -18,7 +34,13 @@
           "mint": { "type": "string", "minLength": 32, "maxLength": 44 },
           "recipient_owner": { "type": "string", "minLength": 32, "maxLength": 44 },
           "min_amount": { "type": "string", "pattern": "^[0-9]+$" },
-          "direction": { "enum": ["in", "out"] }
+          "direction": { "enum": ["in", "out"] },
+          "sender_owner": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 44,
+            "description": "Optional sender pubkey. When set, the oracle verifies the same (mint, sender_owner) pair appears in pre_token_balances with a negative delta of magnitude >= min_amount. Defense-in-depth on top of cross-payment replay protection."
+          }
         }
       }
     },

@@ -74,6 +74,29 @@ for the normative seller-side advertisement shape.
 > advertises them. Paste it directly into `accepts[].extra.oracleProfiles[]`.
 > No typos, no guessed pubkeys.
 
+> **Built-in oracle on the pr402 facilitator.** When a pr402 deployment
+> has its built-in oracle enabled, `GET /capabilities` advertises an
+> `oracle-onchain-transfer` instance the facilitator operator runs
+> themselves — visible under `slaEscrowOracleProfiles[]` with profile
+> id `x402/oracles/onchain-transfer/v1` and a `defaultOperatorPubkey`.
+>
+> If you sell SPL token transfers (the AetherVane Zodiac shape: pre-fund
+> $X USDC, deliver Y tokens of mint M to recipient R), the simplest path
+> is:
+>
+> - Tell buyers to use the facilitator's default by leaving them to read
+>   `slaEscrowOracleProfiles[]`, OR
+> - Reference the same `(profileId, operatorPubkey, registry)` triple
+>   yourself in `accepts[].extra.oracleProfiles[]` so buyers don't have
+>   to look it up.
+>
+> You're free to advertise a different oracle (your own, or an
+> ecosystem one) instead — for trust reasons, performance reasons, or
+> because the built-in oracle's deployment serves a different cluster
+> than yours. The oracle-selection rules don't change. For other profiles
+> (api-quality, file-delivery), the facilitator does NOT ship a built-in
+> oracle; you pick from ecosystem operators.
+
 ## 3. Get a bearer token (one-time setup)
 
 The registry needs to know which seller you are. You prove it by signing a
@@ -282,6 +305,93 @@ The oracle calls `getTransaction(jsonParsed)` against `tx_signature`,
 re-derives the pre/post token deltas, and approves only when the observed
 delta meets `min_amount` for the right `(mint, recipient_owner)`. You
 cannot fake this — the chain is the ground truth.
+
+> **Token-2022 mints with a transfer fee.** If your mint is owned by
+> Token-2022 *and* has a transfer-fee extension configured, the
+> recipient receives the **post-fee net** amount, not what you debited.
+> The buyer's `min_amount` MUST be the net the recipient will receive;
+> the seller broadcasts a slightly higher gross. Mismatched expectations
+> here are the most common false-reject cause for Token-2022 mints. See
+> [`NORMATIVE §6.1`](../oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md#61-token-2022-transfer-fee-handling)
+> for the worked example. Quick check before broadcasting:
+>
+> ```bash
+> spl-token display "$MINT_ADDRESS"
+> ```
+>
+> If the output shows a non-zero `Transfer fee` line, you're in this
+> path; otherwise you're on plain SPL Token and `min_amount` equals
+> what you debit.
+
+#### Idempotency contract (crash recovery for service-side sellers)
+
+If your seller logic runs inside a long-running service (not a one-shot
+shell session) you need to guard against two specific crash points:
+
+1. **Process crashes between the broadcast call returning and the evidence
+   POST.** Your service has spent the gas and moved tokens, but the oracle
+   has no idea. Naive restart logic re-broadcasts → double-send.
+2. **Process crashes between the evidence POST and `submit_delivery`.**
+   The registry knows about the delivery hash, but the chain doesn't, so
+   the oracle never settles. Naive restart logic re-broadcasts → still
+   double-send.
+
+Both failure modes share one root cause: the seller has no durable record
+of what `tx_signature` belongs to which `payment_uid`. The fix is one
+write to a durable store (your own database — Postgres, SQLite, anything)
+**after** the broadcast returns and **before** evidence upload.
+
+The contract:
+
+1. The seller MUST durably persist `(payment_uid, tx_signature, broadcast_at)`
+   AFTER `send_and_confirm_transaction` returns AND BEFORE `POST /v1/registry/delivery`.
+2. On restart, BEFORE invoking the broadcast logic for a given
+   `payment_uid`, the seller MUST first look up the persisted row. If
+   present, skip the broadcast and resume from evidence upload. If absent
+   AND the buyer's `payment_uid` has any matching transfer on-chain
+   (verifiable via `getSignaturesForAddress(seller_pubkey)`-then-`getTransaction`
+   filtering by recipient + mint + min_amount), recover that signature
+   and persist it; do not re-broadcast.
+3. The on-chain `SubmitDelivery` instruction is idempotent at the program
+   level — calling it twice with the same `(payment_uid, delivery_hash)`
+   is rejected by the program with no state mutation. So a retry of just
+   `submit_delivery` after success is safe.
+4. **A retry of broadcast + submit_delivery as a sequence is NOT safe**
+   without persisted `tx_signature`. Without the durable record, you
+   cannot tell whether the previous attempt succeeded mid-flight.
+
+Recommended persistence pattern (Postgres, SQL pseudocode):
+
+```sql
+-- Schema:
+-- CREATE TABLE seller_payments (
+--   payment_uid    BYTEA  PRIMARY KEY,
+--   tx_signature   TEXT   NOT NULL,
+--   broadcast_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- );
+
+-- Insert path: returns a tuple of (current_signature, was_inserted).
+-- If was_inserted=true the caller proceeds with broadcast then
+-- back-fills tx_signature; if was_inserted=false the caller skips
+-- broadcast and resumes from the persisted signature.
+INSERT INTO seller_payments (payment_uid, tx_signature)
+VALUES ($1, '') -- empty placeholder; caller fills in after broadcast
+ON CONFLICT (payment_uid) DO NOTHING;
+
+-- After broadcast succeeds:
+UPDATE seller_payments SET tx_signature = $2 WHERE payment_uid = $1
+  AND tx_signature = '';
+```
+
+Or if your service is single-threaded per `payment_uid` (typical for
+order-processing daemons), a simpler pattern is to wrap the whole
+broadcast-then-update in a single transaction with `SELECT ... FOR UPDATE`
+on a per-uid row.
+
+If your seller logic is shell-based (the recipes in §4 are like this),
+you don't need any of this — each shell invocation is a single attempt
+and a crash means the buyer eventually refunds via TTL. Idempotency
+only matters when you're running a service that retries on its own.
 
 ### 4.C. Large file delivery
 

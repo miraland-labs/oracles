@@ -20,7 +20,7 @@ implementation tips on top.
 
 ## 1. Overview
 
-Four actors collaborate to settle one payment for one piece of work:
+Four actors collaborate to settle one SLA-Escrow payment for one piece of work:
 
 ```
                      ┌──────────────────────┐
