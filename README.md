@@ -23,14 +23,11 @@ workspace; complexity lives off-chain.
 | [`docs/BUYER_GUIDE.md`](docs/BUYER_GUIDE.md)                      | **Buyers start here.** How to pick an oracle and fund via pr402.       |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)                        | Full bring-up from clean Ubuntu 24.04 to production-ready oracle.      |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md)                        | Day-2 ops: monitoring, incidents, rotations, backup, audit, failover. |
-| [`docs/marketing/oracle-intro-article.md`](docs/marketing/oracle-intro-article.md) | Recruiting article for prospective oracle developers (~3 min read).    |
-| [`docs/marketing/oracle-intro-video-script.md`](docs/marketing/oracle-intro-video-script.md) | Narration script for the 2-minute oracle introduction video.            |
 | [`scripts/README.md`](scripts/README.md)                          | Smoke-test runbook for `install.sh` / `upgrade.sh` / `uninstall.sh`.   |
 | [`oracle-common/docs/PR402_CONTRACT.md`](oracle-common/docs/PR402_CONTRACT.md) | Buyer ↔ seller ↔ oracle discovery contract for `pr402`.                |
 | [`oracle-common/docs/devnet-evidence/README.md`](oracle-common/docs/devnet-evidence/README.md) | Evidence-capture layout for the Phase D final-integration milestone.   |
 | `oracle-*/README.md`                                              | Per-family quick-start and resolution-code reference (operator-facing).|
 | `oracle-*/spec/*/NORMATIVE.md`                                    | Per-profile normative specification (SLA + evidence shapes).           |
-| [`.kiro/specs/multi-category-oracle-architecture/`](../.kiro/specs/multi-category-oracle-architecture/) | Architectural source of truth: 13 constraints + 33 properties + tasks. |
 
 ## Quick links
 
