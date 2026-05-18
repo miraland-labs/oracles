@@ -1,11 +1,11 @@
 # Devnet Evidence
 
-This directory holds artifacts captured during the Phase D Final Integration
-Milestone (Task 23 in the
-[multi-category-oracle-architecture spec](../../../.kiro/specs/multi-category-oracle-architecture/tasks.md)).
-Each subdirectory corresponds to one end-to-end run on a fresh Ubuntu 24.04
-VPS with all three sibling oracles installed via `oracles/scripts/install.sh`
-and a MinIO instance bootstrapped via `oracles/scripts/bootstrap-minio.sh`.
+This directory holds artifacts captured during end-to-end devnet
+integration runs on fresh Ubuntu 24.04 hosts with all three sibling
+oracles installed via `oracles/scripts/install.sh` and a MinIO instance
+bootstrapped via `oracles/scripts/bootstrap-minio.sh`. Use these
+artifacts to validate fresh deploys and to capture a known-good baseline
+before major upgrades.
 
 ## Required artifacts per run
 
@@ -40,6 +40,6 @@ devnet-evidence/
 
 ## Status
 
-Evidence directories are populated when each milestone-23 run is performed
+Evidence directories are populated when each integration run is performed
 on real hardware. The directory is empty in the source tree so contributors
 can reproduce the runbooks without conflicting with prior runs.

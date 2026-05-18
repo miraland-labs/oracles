@@ -15,9 +15,9 @@ The contract is normative for both directions:
 
 Cross-references:
 
-* Architectural rationale — [`design.md` § Buyer ↔ Oracle Discovery Contract](../../../.kiro/specs/multi-category-oracle-architecture/design.md#buyer--oracle-discovery-contract).
-* Acceptance criteria — `requirements.md` Requirements 28, 29 and Properties
-  P-CAP-1, P-CAP-2.
+* Acceptance criteria are self-contained in this document; the property
+  names (P-CAP-1, P-CAP-2) referenced in the invariant numbering live in
+  the upstream `oracles` development spec.
 
 ---
 
@@ -77,10 +77,10 @@ These are enforced when pr402 proxies a seller's `accepts[].extra`:
 
 2. **No `operatorPubkey` may appear in two `oracleProfiles[]` entries.** v1
    binds one authority to one profile so the buyer's choice of authority
-   deterministically selects the family the SLA must satisfy (design.md C10).
+   deterministically selects the family the SLA must satisfy.
 
 3. **`profileId` strings are matched by exact equality.** No prefix matches,
-   no aliases (design.md C7, Property P-DISP-1).
+   no aliases.
 
 4. **`oracleAuthorities[]` remains the authoritative list** for backwards
    compatibility with builders that don't know about `oracleProfiles[]`.

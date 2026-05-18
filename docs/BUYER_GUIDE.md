@@ -230,7 +230,7 @@ high-level "is the oracle alive and processing".
 The on-chain `Payment.resolution_hash` is a deterministic SHA-256
 fingerprint of the verdict. Anyone holding the SLA + delivery bytes can
 recompute it and confirm the oracle didn't lie. The recipe lives in
-[`design.md` §Resolution Hash](../../.kiro/specs/multi-category-oracle-architecture/design.md)
+[`SLA_ESCROW_PROTOCOL.md` §5](SLA_ESCROW_PROTOCOL.md#5-trust-boundaries),
 and the property test
 [`oracle-common/tests/cross_family_properties.rs`](../oracle-common/tests/cross_family_properties.rs)
 proves the determinism.

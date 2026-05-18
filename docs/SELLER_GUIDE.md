@@ -33,11 +33,6 @@ Don't overthink the choice. If your delivery is a JSON response you compute
 on the fly, pick api-quality. If it's a Solana transaction you broadcast,
 pick onchain-transfer. If it's a file, pick file-delivery.
 
-If none fits, the architecture supports adding new categories without
-forking — see
-[`design.md` §Pluggable Trait Surface](../../.kiro/specs/multi-category-oracle-architecture/design.md#pluggable-trait-surface-rust-signatures)
-or open an issue.
-
 ## 2. Find the oracle's address
 
 The buyer's HTTP-402 challenge from your service includes (or should

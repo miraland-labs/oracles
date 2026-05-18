@@ -209,8 +209,7 @@ Every call is logged in `oracle_lifecycle_events` with
 The chain commits only `resolution_hash`. Anyone holding SLA + delivery
 bytes plus the `oracle_jobs` row can independently recompute and verify
 the verdict; the recipe lives in
-[`SLA_ESCROW_PROTOCOL.md` §5](SLA_ESCROW_PROTOCOL.md#5-trust-boundaries)
-and [`design.md`](../../.kiro/specs/multi-category-oracle-architecture/design.md).
+[`SLA_ESCROW_PROTOCOL.md` §5](SLA_ESCROW_PROTOCOL.md#5-trust-boundaries).
 
 For a regulator-style audit query, the three relevant tables are
 `oracle_jobs` (job state), `oracle_verdicts` (the verdict + per-check

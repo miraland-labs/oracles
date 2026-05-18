@@ -70,8 +70,7 @@ deltas, settles.
 
 ### Operational notes
 
-- Per [design.md C7](../../.kiro/specs/multi-category-oracle-architecture/design.md),
-  one `oracle-onchain-transfer` binary serves exactly one cluster. To
+- One `oracle-onchain-transfer` binary serves exactly one cluster. To
   evaluate transfers on multiple clusters, run multiple binaries with
   different `TRANSFER_CLUSTER` and different oracle keypairs.
 - Running two binaries with the same oracle keypair is unsupported (race).

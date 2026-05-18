@@ -521,9 +521,6 @@ content-addressed and verifiable by anyone, anytime.
 - pr402's `agent-integration.md` (served at the deployed facilitator)
   — pr402-side details for buyers calling the build / verify / settle
   endpoints.
-- Hub `design.md` (`.kiro/specs/multi-category-oracle-architecture/design.md`)
-  — internal traits, properties, and rationale; for implementers, not
-  integrators.
 
 ---
 

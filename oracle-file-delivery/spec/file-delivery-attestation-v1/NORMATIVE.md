@@ -198,8 +198,7 @@ The `details` slot of the canonical `x402/oracles/resolution-envelope/v1` envelo
 
 ## 9. References
 
-* Multi-category oracle architecture:
-  [`design.md`](../../../../.kiro/specs/multi-category-oracle-architecture/design.md).
+* Cross-actor protocol: [`SLA_ESCROW_PROTOCOL.md`](../../../docs/SLA_ESCROW_PROTOCOL.md).
 * Implementation:
   [`oracle-file-delivery/src/evaluator.rs`](../../src/evaluator.rs)
   and [`oracle-file-delivery/src/fetcher.rs`](../../src/fetcher.rs).

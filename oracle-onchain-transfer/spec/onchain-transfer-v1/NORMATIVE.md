@@ -218,7 +218,6 @@ the field as `null` in that case.
 
 ## 9. References
 
-* Multi-category oracle architecture:
-  [`design.md`](../../../../.kiro/specs/multi-category-oracle-architecture/design.md).
+* Cross-actor protocol: [`SLA_ESCROW_PROTOCOL.md`](../../../docs/SLA_ESCROW_PROTOCOL.md).
 * Implementation: [`oracle-onchain-transfer/src/evaluator.rs`](../../src/evaluator.rs)
   — see `verify_observed_transfer` for the pure check battery.

@@ -49,7 +49,3 @@ stable serialization of `response_body`).
   for v1.
 - SLA-Escrow program: `DeliverySubmittedEvent`, `ConfirmOracle` (`sla-escrow`
   workspace).
-- Multi-category architecture spec:
-  [`.kiro/specs/multi-category-oracle-architecture/design.md`](../../../../.kiro/specs/multi-category-oracle-architecture/design.md)
-  (see §Pluggable Trait Surface for how this profile would slot in alongside
-  the three currently-shipped families).

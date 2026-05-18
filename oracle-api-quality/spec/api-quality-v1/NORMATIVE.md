@@ -47,7 +47,7 @@ The reference oracle implements **hash-bound SLA compliance on seller-attested d
 
 **When this profile is appropriate:** bootstrap and experimentation; trusted or low-stakes counterparties; amounts small relative to abuse cost.
 
-**When to migrate:** high-value escrows, adversarial sellers, or regulated attestations require a **domain-specific oracle** or a **stronger profile** (see draft `signed-delivery` work in [`../signed-delivery-v2/DRAFT.md`](../signed-delivery-v2/DRAFT.md)).
+**When to migrate:** high-value escrows, adversarial sellers, or regulated attestations require a **domain-specific oracle** or a stronger profile that adds seller-signed commitments, independent replay, or third-party attestation.
 
 **Dispute paths:** operators may use `POST /evaluate` for manual re-run after fixing infra; governance may rotate `oracle_authority` on-chain; parties may choose a different oracle for new payments.
 
@@ -140,9 +140,8 @@ Sellers SHOULD declare `x402/oracles/api-quality/v1` in marketplace or discovery
 
 ## 8. References
 
-- x402 architecture: `[ARCHITECTURE_OVERVIEW.md](../../../../ARCHITECTURE_OVERVIEW.md)` — *Standardizing the SLA Hash & Delivery Hash*.
 - Implementation: `[oracle-api-quality` source](../../src/) — `sla.rs`, `evidence.rs`, `evaluator.rs`.
-- Multi-category architecture spec: [`.kiro/specs/multi-category-oracle-architecture/design.md`](../../../../.kiro/specs/multi-category-oracle-architecture/design.md).
+- Cross-actor protocol: [`SLA_ESCROW_PROTOCOL.md`](../../../docs/SLA_ESCROW_PROTOCOL.md).
 
 ---
 
