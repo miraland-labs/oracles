@@ -1,0 +1,61 @@
+# systemd unit for the Dockerized `oracle-onchain-transfer` running
+# against Solana **mainnet-beta**. Co-exists with the devnet unit on
+# the same host: different env file, different keypair directory,
+# different BIND_ADDR, same Docker image.
+#
+# Install:
+#   sudo install -m 0644 oracle-onchain-transfer-mainnet.service \
+#       /etc/systemd/system/oracle-onchain-transfer-mainnet.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now oracle-onchain-transfer-mainnet.service
+#
+# Operate:
+#   sudo systemctl status  oracle-onchain-transfer-mainnet.service
+#   sudo systemctl restart oracle-onchain-transfer-mainnet.service
+#   sudo journalctl -u oracle-onchain-transfer-mainnet.service -f
+#   docker logs -f oracle-onchain-transfer-mainnet
+#
+# Prerequisites (set up by `oracle-deploy.sh` in this directory):
+#   /etc/oracle/onchain-transfer-mainnet.env
+#   /var/lib/oracle/onchain-transfer-mainnet/oracle-keypair.json (mode 0600)
+#   docker image: oracle-onchain-transfer:current
+
+[Unit]
+Description=x402 oracle-onchain-transfer (mainnet) — Dockerized
+Documentation=https://github.com/miraland-labs/oracles
+After=docker.service network-online.target postgresql.service
+Requires=docker.service
+Wants=network-online.target postgresql.service
+
+[Service]
+TimeoutStartSec=30
+TimeoutStopSec=20
+
+ExecStartPre=-/usr/bin/docker rm -f oracle-onchain-transfer-mainnet
+ExecStart=/usr/bin/docker run \
+    --rm \
+    --name oracle-onchain-transfer-mainnet \
+    --network host \
+    --pull=never \
+    --read-only \
+    --tmpfs /tmp:size=64m \
+    --env-file /etc/oracle/onchain-transfer-mainnet.env \
+    -v /var/lib/oracle/onchain-transfer-mainnet/oracle-keypair.json:/keys/oracle-keypair.json:ro \
+    --memory 1g \
+    --cpus 1 \
+    --log-driver journald \
+    --log-opt tag=oracle-onchain-transfer-mainnet \
+    oracle-onchain-transfer:current
+
+ExecStop=/usr/bin/docker stop -t 15 oracle-onchain-transfer-mainnet
+
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+# Build-context allowlist for the Docker images under scripts/docker/.
+# Keeps the build tarball small and reproducible by excluding everything
+# the Rust compiler does not need.
+
+target/
+**/target/
+.git/
+.github/
+.kiro/
+.cursor/
+docs/
+**/*.md
+**/.DS_Store
+**/*.swp
+**/*.swo
+*.env
+.env
+**/*.keypair.json
+**/.env
+**/.env.*
+
+# Keep the workspace README at the root in case any crate's `[package].readme`
+# field references it.
+!README.md

@@ -13,6 +13,13 @@ For day-2 operations see [`OPERATIONS.md`](OPERATIONS.md). For the
 cross-actor protocol, see [`SLA_ESCROW_PROTOCOL.md`](SLA_ESCROW_PROTOCOL.md).
 For script smoke tests see [`../scripts/README.md`](../scripts/README.md).
 
+> **Two deployment shapes.** This guide assumes the **native binary +
+> systemd** path (binary at `/opt/oracle/<family>/`, supervised by
+> `oracle@<family>.service`). For the **Dockerized binary + systemd**
+> path — same Postgres-on-host model, just the binary inside a
+> container — see [`../scripts/docker/README.md`](../scripts/docker/README.md).
+> Pick one. Don't mix them on the same host.
+
 ---
 
 ## 1. Quickstart

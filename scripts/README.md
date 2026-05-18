@@ -1,5 +1,22 @@
 # Operator scripts — Ubuntu 24.04 deployment
 
+Two deployment shapes are supported. **Pick one; don't mix.**
+
+| Shape | Where to look | When to choose |
+| --- | --- | --- |
+| Native binary, supervised by systemd | This directory (`install.sh`, `upgrade.sh`, `uninstall.sh`, `oracle@.service`) | Default. Simplest mental model when you want a single Rust binary under systemd. |
+| Dockerized binary, supervised by systemd | [`docker/`](docker/) subdirectory | Reproducible image versioning, easier rollback via tags, clean host filesystem. Postgres runs natively on the host either way. |
+
+The rest of this README documents the **native** path. For the Docker path,
+read [`docker/README.md`](docker/README.md) — it covers the same lifecycle
+(install / restart / upgrade / rollback) plus the dual-cluster reference
+shape (one container per cluster, sharing the host's Postgres via
+per-cluster databases).
+
+---
+
+## Native deployment — files in this directory
+
 Four scripts in this directory cover the full deploy lifecycle of one or more
 x402 oracle binaries on a fresh Ubuntu 24.04 host:
 
