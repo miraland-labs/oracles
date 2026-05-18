@@ -36,6 +36,107 @@ files).
 | BIND_ADDR | `127.0.0.1:4021` | `127.0.0.1:4031` | nginx routes by port; the two containers can't fight for the same port on `--network host`. |
 | Postgres database | `oracle_onchain_transfer_devnet` | `oracle_onchain_transfer_mainnet` | Same Postgres instance, separate DBs. Blast-radius isolation: a regression on devnet can't corrupt mainnet's settlement audit log. |
 
+## Postgres model: one instance, multiple databases
+
+The deployment runs **one** PostgreSQL server (installed via
+`apt-get install postgresql-16`) holding **two** databases — one per
+cluster — that are fully isolated at the database layer. Understanding
+the distinction matters because Postgres uses the word "cluster" for
+its own concept (a server process and its files on disk), which
+collides with "Solana cluster" (devnet, mainnet, testnet). Throughout
+this README we say **instance** for the Postgres process and
+**database** for the logical container of tables, to keep the two
+ideas separate.
+
+### The hierarchy
+
+```
+PostgreSQL server process (one per host, listening on 127.0.0.1:5432)
+└── databases (e.g. oracle_onchain_transfer_devnet)
+    └── schemas (default: "public")
+        └── tables, indexes, sequences
+```
+
+Each database is fully isolated from its siblings:
+
+- Its own tables, indexes, sequences. A `CREATE TABLE` inside one
+  database is invisible from any other connected to the same instance.
+- Its own backup unit: `pg_dump <db>` produces one file; `pg_restore`
+  affects only that database.
+- Its own connection: a `DATABASE_URL` selects exactly one database
+  (the path component after the last `/`).
+
+What's *shared* across databases on the same instance:
+
+- The Postgres server process and its memory + disk.
+- Server-level config (`postgresql.conf`, `pg_hba.conf`).
+- Roles (a user `oracle_app` exists at the server level and gets
+  per-database privileges via `OWNER` or `GRANT`).
+
+For the dual-cluster oracle setup this is the right shape:
+**blast-radius isolation** where it matters (a corruption or accidental
+`DELETE` in devnet's tables cannot reach mainnet) and **resource
+sharing** where it's cheap (one Postgres process barely registers in
+monitoring at our settlement rates).
+
+### Creating the two databases
+
+The bring-up below does this in three commands:
+
+```bash
+sudo -u postgres createuser oracle_app -P    # interactive password prompt
+sudo -u postgres createdb -O oracle_app oracle_onchain_transfer_devnet
+sudo -u postgres createdb -O oracle_app oracle_onchain_transfer_mainnet
+```
+
+What's happening:
+
+- `createuser oracle_app -P` creates a Postgres role (the runtime user
+  the oracle binary connects as). The `-P` flag prompts for a password.
+  Don't reuse the `postgres` superuser — production hygiene says runtime
+  processes should never have superuser rights.
+- `createdb -O oracle_app <name>` creates a database **owned by**
+  `oracle_app`, meaning that role can do anything inside it without
+  further `GRANT` statements.
+- The two databases are independent containers. Running the same schema
+  migration against each (`psql -f init.sql` calls in step 2 below)
+  produces two parallel, empty oracle ledgers.
+
+### How connection strings stay separate
+
+The only difference between the two oracle env files is the database
+name at the end of the URL:
+
+```
+# /etc/oracle/onchain-transfer-devnet.env
+DATABASE_URL=postgres://oracle_app:PASSWORD@127.0.0.1:5432/oracle_onchain_transfer_devnet
+
+# /etc/oracle/onchain-transfer-mainnet.env
+DATABASE_URL=postgres://oracle_app:PASSWORD@127.0.0.1:5432/oracle_onchain_transfer_mainnet
+```
+
+Same server (`127.0.0.1:5432`), same role (`oracle_app`), same password
+— different database name. Postgres enforces that a connection to one
+database cannot read or write tables in the other. Each oracle's
+connection pool is bound to its own database.
+
+### When you'd want a separate Postgres instance
+
+The "one instance, multiple databases" model is the right default.
+Reasons to run a *second* Postgres process (entirely separate server)
+are narrow:
+
+- **Different Postgres major versions** for the two clusters. Rare in
+  practice; most operators upgrade in lockstep.
+- **Dedicated resources**: e.g. mainnet on its own instance because
+  devnet's traffic must never touch mainnet's CPU/IO. At our
+  settlement rates this is unjustified.
+- **Different network endpoints**: e.g. mainnet on a managed RDS,
+  devnet on the local host. Possible later; not required for bring-up.
+
+If you ever do split, the only change per oracle is the host/port in
+each `DATABASE_URL`.
+
 ## One-time setup
 
 Bring-up has six numbered groups. Devnet and mainnet are symmetric — do
