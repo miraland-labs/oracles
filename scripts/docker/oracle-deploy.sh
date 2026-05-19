@@ -108,13 +108,17 @@ require_tool() {
 }
 
 # Read the env file for BIND_ADDR's port; fall back to family defaults.
+# Also surfaces the bound interface to drive the post-deploy reachability
+# warning further down.
+BIND_INTERFACE=""        # `127.0.0.1`, `0.0.0.0`, or empty when not in env.
 detect_health_port() {
     if [[ -n "$HEALTH_PORT" ]]; then return; fi
     if [[ -f "$ENV_FILE" ]]; then
         local bind
         bind="$(grep -E '^BIND_ADDR=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
-        if [[ "$bind" =~ :([0-9]+)$ ]]; then
-            HEALTH_PORT="${BASH_REMATCH[1]}"
+        if [[ "$bind" =~ ^([0-9.]+):([0-9]+)$ ]]; then
+            BIND_INTERFACE="${BASH_REMATCH[1]}"
+            HEALTH_PORT="${BASH_REMATCH[2]}"
             return
         fi
     fi
@@ -156,6 +160,35 @@ probe_health() {
     return 1
 }
 
+# After a successful loopback /health probe, warn the operator if the
+# binary is bound to 127.0.0.1 only. External clients (other oracles, the
+# spl-token-balance handler, buyers running the seller-register flow) will
+# get "Empty reply from server" until either:
+#   1. BIND_ADDR is changed to 0.0.0.0:<port> (Posture A — direct bind), or
+#   2. nginx / Caddy / Cloudflare is fronting the loopback port (Posture B).
+#
+# This warning is silent when BIND_ADDR=0.0.0.0 (already exposed) or when
+# we couldn't parse BIND_ADDR (operator overrode by other means).
+warn_if_loopback_only() {
+    [[ "$BIND_INTERFACE" == "127.0.0.1" ]] || return 0
+    cat <<EOF >&2
+
+⚠  POST-DEPLOY REACHABILITY WARNING
+   ${SERVICE} is bound to 127.0.0.1:${HEALTH_PORT} (loopback only).
+   External clients cannot reach the registry until you do ONE of:
+
+   (A) Edit ${ENV_FILE}: change BIND_ADDR to 0.0.0.0:${HEALTH_PORT}, then
+       restart the unit. Plain HTTP — fine for devnet.
+
+   (B) Front the loopback port with nginx / Caddy / Cloudflare for TLS
+       termination, then expose :443 only. Required for mainnet.
+
+   See scripts/docker/onchain-transfer-{devnet,mainnet}.env.example for
+   the documented Posture A / Posture B comment block.
+
+EOF
+}
+
 # ----- Sanity checks --------------------------------------------------------
 
 require_tool docker
@@ -188,6 +221,7 @@ if (( ROLLBACK )); then
     systemctl restart "${SERVICE}"
     if probe_health; then
         echo "[rollback] /health → healthy on port ${HEALTH_PORT}"
+        warn_if_loopback_only
         exit 0
     fi
     echo "[rollback] /health did not flip to healthy within ${HEALTH_TIMEOUT}s" >&2
@@ -214,7 +248,15 @@ if (( SKIP_BUILD )); then
     echo "[deploy] reusing existing image ${IMAGE_SHA}"
 else
     echo "[deploy] building ${IMAGE_SHA} from ${WORKSPACE_ROOT}"
+    # --network host: build needs egress on port 80 (debian apt) and 443
+    # (crates.io). Docker's default bridge network is unreliable for this
+    # on many cloud and on-prem hosts (asymmetric routing, MTU mismatch,
+    # port-80 filtering). The build container is short-lived and only
+    # fetches public packages, so host networking carries no extra risk.
+    # The runtime container still uses host networking deliberately
+    # (see Dockerfile and the systemd unit) for the Postgres connection.
     DOCKER_BUILDKIT=1 docker build \
+        --network host \
         -f "${WORKSPACE_ROOT}/scripts/docker/Dockerfile" \
         --build-arg "FAMILY=${FAMILY}" \
         --label "x402.oracle.family=${FAMILY}" \
@@ -235,6 +277,7 @@ echo "[deploy] restarted ${SERVICE}; probing /health on port ${HEALTH_PORT}…"
 
 if probe_health; then
     echo "[deploy] /health → healthy"
+    warn_if_loopback_only
     echo "[deploy] done. To roll back: sudo bash $0 --unit ${UNIT} --rollback"
     exit 0
 fi
@@ -246,6 +289,7 @@ if docker image inspect "${IMAGE}:previous" >/dev/null 2>&1; then
     systemctl restart "${SERVICE}"
     if probe_health; then
         echo "[deploy] rolled back; /health → healthy" >&2
+        warn_if_loopback_only
         exit 1
     fi
     echo "[deploy] rollback also failed; manual intervention required" >&2

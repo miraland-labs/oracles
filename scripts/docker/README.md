@@ -149,45 +149,83 @@ sudo apt-get install -y postgresql-16 docker.io git curl jq
 # without sudo for diagnostics; the systemd unit doesn't need this.
 # sudo usermod -aG docker "$USER" && newgrp docker
 
+# Solana CLI (required for Step 3 keypair generation and devnet airdrop).
+sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+# Activate it in this shell and persist for future logins:
+export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+echo 'export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"' >> ~/.bashrc
+solana --version    # confirm
+
 # ----- 1. Clone the repo ----------------------------------------------------
-git clone https://github.com/miraland-labs/oracles.git /opt/src/oracles
+sudo install -d -o root -g root -m 0755 /opt/src
+sudo git clone https://github.com/miraland-labs/oracles.git /opt/src/oracles
 cd /opt/src/oracles
+# All later steps assume CWD = /opt/src/oracles. The repo is root-owned;
+# you can read it as your user, and the docker build / install commands
+# below run under sudo so writes work.
 
 # ----- 2. Postgres databases (one per cluster) ------------------------------
+# (Run from /tmp to avoid the harmless "could not change directory to
+# /home/..." warning when sudo'ing to the postgres user.)
+cd /tmp
+
 sudo -u postgres createuser oracle_app -P
 # When prompted, set a strong password; use the same password for the
 # two database connections below.
 sudo -u postgres createdb -O oracle_app oracle_onchain_transfer_devnet
 sudo -u postgres createdb -O oracle_app oracle_onchain_transfer_mainnet
 
-# Apply the schema to both databases.
+# Apply the schema to both databases (use absolute paths — the postgres
+# user must be able to read the file, and /opt/src/oracles is world-
+# readable from the install -d above).
 PGPASSWORD='<oracle_app password>' \
     psql -U oracle_app -h 127.0.0.1 -d oracle_onchain_transfer_devnet \
-    -f oracle-common/migrations/init.sql
+    -f /opt/src/oracles/oracle-common/migrations/init.sql
 
 PGPASSWORD='<oracle_app password>' \
     psql -U oracle_app -h 127.0.0.1 -d oracle_onchain_transfer_mainnet \
-    -f oracle-common/migrations/init.sql
+    -f /opt/src/oracles/oracle-common/migrations/init.sql
+
+# Sanity check: each database should now have ~9 oracle_* tables.
+PGPASSWORD='<oracle_app password>' \
+    psql -U oracle_app -h 127.0.0.1 -d oracle_onchain_transfer_devnet -c '\dt'
+
+cd /opt/src/oracles   # back to repo root for Steps 3-6
 
 # ----- 3. Keypairs (one per cluster, NEVER shared) --------------------------
 # Devnet keypair:
 sudo install -d -o root -g root -m 0750 /var/lib/oracle/onchain-transfer-devnet
-sudo solana-keygen new --no-bip39-passphrase \
-    -o /var/lib/oracle/onchain-transfer-devnet/oracle-keypair.json
-sudo chmod 0600 /var/lib/oracle/onchain-transfer-devnet/oracle-keypair.json
-solana airdrop 2 \
-    "$(solana-keygen pubkey /var/lib/oracle/onchain-transfer-devnet/oracle-keypair.json)" \
-    --url devnet
+
+# Generate as your user (so solana-keygen's PATH resolves), capture the
+# pubkey, then atomically install with root ownership and 0600 mode.
+solana-keygen new --no-bip39-passphrase -o /tmp/oracle-keypair-devnet.json
+ORACLE_DEVNET_PUBKEY=$(solana-keygen pubkey /tmp/oracle-keypair-devnet.json)
+echo "Devnet oracle pubkey: $ORACLE_DEVNET_PUBKEY"
+sudo install -m 0600 -o root -g root \
+    /tmp/oracle-keypair-devnet.json \
+    /var/lib/oracle/onchain-transfer-devnet/oracle-keypair.json
+shred -u /tmp/oracle-keypair-devnet.json
+
+solana airdrop 2 "$ORACLE_DEVNET_PUBKEY" --url devnet
 
 # Mainnet keypair:
 sudo install -d -o root -g root -m 0750 /var/lib/oracle/onchain-transfer-mainnet
-sudo solana-keygen new --no-bip39-passphrase \
-    -o /var/lib/oracle/onchain-transfer-mainnet/oracle-keypair.json
-sudo chmod 0600 /var/lib/oracle/onchain-transfer-mainnet/oracle-keypair.json
+
+solana-keygen new --no-bip39-passphrase -o /tmp/oracle-keypair-mainnet.json
+ORACLE_MAINNET_PUBKEY=$(solana-keygen pubkey /tmp/oracle-keypair-mainnet.json)
+echo "Mainnet oracle pubkey: $ORACLE_MAINNET_PUBKEY"
+sudo install -m 0600 -o root -g root \
+    /tmp/oracle-keypair-mainnet.json \
+    /var/lib/oracle/onchain-transfer-mainnet/oracle-keypair.json
+shred -u /tmp/oracle-keypair-mainnet.json
+
 # Mainnet keypair: airdrop is not available. Send real SOL from your treasury:
 #   solana transfer <mainnet_pubkey> 1 --url mainnet-beta --keypair <treasury>
 
 # Back up BOTH keypair files NOW (3 copies: hot/warm/cold).
+# Read them via sudo, since they're now root-owned 0600:
+#   sudo cat /var/lib/oracle/onchain-transfer-devnet/oracle-keypair.json
+#   sudo cat /var/lib/oracle/onchain-transfer-mainnet/oracle-keypair.json
 
 # ----- 4. Env files (one per cluster) ---------------------------------------
 sudo install -d -o root -g root -m 0750 /etc/oracle
