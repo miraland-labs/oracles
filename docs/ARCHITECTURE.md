@@ -37,7 +37,8 @@ time.
 │  ┌──────┴───────────────────────────────────────┴───────┐              │
 │  │                    HTTP Server (Axum)                  │              │
 │  │  /health  /stats  /metrics  /evaluate                 │              │
-│  │  /v1/registry/{info,sla,delivery,seller/*}            │              │
+│  │  /v1/registry/{info,sla,delivery,blob,{sha256_hex}}   │              │
+│  │  /v1/registry/seller/{challenge,register,rotate}      │              │
 │  └───────────────────────────────────────────────────────┘              │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -233,12 +234,12 @@ The 5-min gap between oracle margin and on-chain cutoff absorbs:
 ### Core
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SOLANA_RPC_URL` | required | HTTP RPC endpoint |
-| `SOLANA_WS_URL` | derived | WebSocket endpoint for logsSubscribe |
+| `SOLANA_RPC_URL` | `https://api.devnet.solana.com` | HTTP RPC endpoint |
+| `SOLANA_WS_URL` | `wss://api.devnet.solana.com` | WebSocket endpoint for logsSubscribe |
 | `ESCROW_PROGRAM_ID` | `sla_escrow_api::ID` | SLA-Escrow program to monitor |
 | `ORACLE_KEYPAIR_PATH` | required | Ed25519 keypair for signing ConfirmOracle |
 | `BIND_ADDR` | `127.0.0.1:4020` | HTTP server listen address |
-| `DATABASE_URL` | optional | Postgres for ledger + dead-letter |
+| `DATABASE_URL` | optional | Postgres for ledger + dead-letter (recommended) |
 
 ### Active Guardian
 | Variable | Default | Description |
@@ -248,13 +249,24 @@ The 5-min gap between oracle margin and on-chain cutoff absorbs:
 | `ORACLE_MAX_RETRY_ATTEMPTS` | 30 | Max retries before forced reject |
 | `ORACLE_REJECT_SAFETY_MARGIN_SEC` | 600 | Seconds before expiry to issue reject |
 
-### Evidence Registry
+### Evidence Registry & Storage
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EVIDENCE_REGISTRY_URL` | required | Base URL for SLA/evidence fetch |
-| `EVIDENCE_REGISTRY_AUTH_HEADER` | optional | `Authorization` header for GETs |
-| `REGISTRY_MAX_BYTEA_BYTES` | 4MB | Max inline document size |
-| `REGISTRY_MAX_BLOB_BYTES` | 5GB | Max streamed blob size |
+| `EVIDENCE_REGISTRY_URLS` | `http://localhost:4021` | Comma-separated mirror URLs for fallback fetching |
+| `EVIDENCE_REGISTRY_URL` | `http://localhost:4021` | Single fallback fetch URL (used if `EVIDENCE_REGISTRY_URLS` is empty) |
+| `EVIDENCE_REGISTRY_AUTH_HEADER` | optional | `Authorization` header for GET fetch requests |
+| `ORACLE_REGISTRY_BACKEND` | required | Upload storage backend: `postgres`, `s3`, or `local` |
+| `ORACLE_REGISTRY_MAX_BYTEA_BYTES` | 4MB | Max size of inline documents (SLA/Evidence JSON) |
+| `ORACLE_REGISTRY_MAX_BLOB_BYTES` | 5GB | Max size of streamed blobs |
+
+### S3 Backend Configuration (Required if `ORACLE_REGISTRY_BACKEND=s3`)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORACLE_REGISTRY_S3_ENDPOINT` | required | S3 service endpoint URL |
+| `ORACLE_REGISTRY_S3_BUCKET` | required | Target S3 bucket name |
+| `ORACLE_REGISTRY_S3_ACCESS_KEY` | required | S3 access key |
+| `ORACLE_REGISTRY_S3_SECRET_KEY` | required | S3 secret key |
+| `ORACLE_REGISTRY_S3_REGION` | `us-east-1` | S3 region |
 
 ---
 

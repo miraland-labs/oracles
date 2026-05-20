@@ -21,7 +21,7 @@ oracle-common = { path = "oracle-common", version = "0.1.0" }
 # x402 ecosystem
 # 0.2.9 has `declare_id!("s5zkKiy8FD9nFdAhQZoHHV3G8s4QCPzE4cR9U4Hr4ZH")` (devnet).
 # 0.3.x has the mainnet program id. Pin per cluster you build for.
-sla-escrow-api = "=0.2.10"
+sla-escrow-api = "0.3.1"
 
 # Web server / async
 axum = "0.8"

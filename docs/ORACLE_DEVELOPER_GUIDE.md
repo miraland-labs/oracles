@@ -496,15 +496,34 @@ ENTRYPOINT ["/usr/local/bin/oracle"]
 
 ### Environment variables
 
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SOLANA_RPC_URL` | no | `https://api.devnet.solana.com` | HTTP RPC for the cluster you serve |
+| `SOLANA_WS_URL` | no | `wss://api.devnet.solana.com` | WebSocket for logsSubscribe |
+| `ESCROW_PROGRAM_ID` | no | `sla_escrow_api::ID` | SLA-Escrow program to monitor |
+| `ORACLE_KEYPAIR_PATH` | yes | - | Ed25519 keypair path (signs ConfirmOracle) |
+| `BIND_ADDR` | no | `127.0.0.1:4020` | Default HTTP server bind address |
+| `DATABASE_URL` | no | - | Postgres URL for ledger + dead-letter (recommended) |
+| `ORACLE_REGISTRY_BACKEND` | yes | - | Storage backend: `postgres`, `s3`, or `local` |
+| `EVIDENCE_REGISTRY_URLS` | no | `http://localhost:4021` | Comma-separated mirror URLs for fallback fetching |
+| `EVIDENCE_REGISTRY_URL` | no | `http://localhost:4021` | Single fallback fetch URL (used if `EVIDENCE_REGISTRY_URLS` is empty) |
+| `EVIDENCE_REGISTRY_AUTH_HEADER` | no | - | `Authorization` header for GET fetch requests |
+| `ORACLE_REGISTRY_MAX_BYTEA_BYTES` | no | `4MB` | Max size of inline documents (SLA/Evidence JSON) |
+| `ORACLE_REGISTRY_MAX_BLOB_BYTES` | no | `5GB` | Max size of streamed blobs |
+| `ORACLE_RETRY_INITIAL_DELAY_SEC` | no | `10` | First retry delay (seconds) |
+| `ORACLE_RETRY_MAX_DELAY_SEC` | no | `120` | Maximum retry backoff cap (seconds) |
+| `ORACLE_MAX_RETRY_ATTEMPTS` | no | `30` | Max retries before protective reject |
+| `ORACLE_REJECT_SAFETY_MARGIN_SEC` | no | `600` | Safety margin before expiry to issue reject |
+
+**S3 Backend Configuration (Only required when `ORACLE_REGISTRY_BACKEND=s3`):**
+
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SOLANA_RPC_URL` | yes | HTTP RPC for the cluster you serve |
-| `SOLANA_WS_URL` | yes | WebSocket for logsSubscribe |
-| `ESCROW_PROGRAM_ID` | no | Defaults to `sla_escrow_api::ID` |
-| `ORACLE_KEYPAIR_PATH` | yes | Ed25519 keypair (signs ConfirmOracle) |
-| `BIND_ADDR` | no | Default `127.0.0.1:4020` |
-| `DATABASE_URL` | no | Postgres for ledger (recommended) |
-| `EVIDENCE_REGISTRY_URL` | yes | Your registry base URL |
+| `ORACLE_REGISTRY_S3_ENDPOINT` | yes | S3 endpoint URL |
+| `ORACLE_REGISTRY_S3_BUCKET` | yes | Target S3 bucket name |
+| `ORACLE_REGISTRY_S3_ACCESS_KEY` | yes | S3 access key |
+| `ORACLE_REGISTRY_S3_SECRET_KEY` | yes | S3 secret key |
+| `ORACLE_REGISTRY_S3_REGION` | no (defaults to `us-east-1`) | S3 region |
 
 ### Systemd unit
 
@@ -625,25 +644,89 @@ evaluator (~200 lines of domain logic).
 
 ---
 
+## Operator Economics: Recommended `oracle_fee_bps`
+
+The on-chain program enforces only an upper bound (`MAX_ORACLE_FEE_BPS = 500`,
+i.e. 5%). It has no built-in floor. Operators and Facilitators are responsible
+for picking a tip that pays for the cost of issuing `ConfirmOracle` and any
+external evaluation work.
+
+### Cost breakdown per verdict (Solana mainnet, ~$150/SOL)
+
+| Cost line | Typical |
+|-----------|---------|
+| Solana base fee (5000 lamports) | ~$0.00075 |
+| Priority fee (congested periods) | $0.003–$0.015 |
+| RPC `getTransaction` / `getAccountInfo` | $0.000–$0.005 (depending on provider) |
+| Active Guardian retries (worst case ~30 fetches) | up to $0.030 in RPC budget |
+
+A single happy-path verdict costs roughly $0.005–$0.020 to land on-chain.
+Anything below that is a net loss for the operator and signals that the rate
+is too low.
+
+### Tiering convention (recommended defaults)
+
+The pr402 reference Facilitator opens canonical Escrows with a default of
+**100 bps (1%)** for stable-mint payments. This is the recommended starting
+point for any new Facilitator or operator-managed Escrow.
+
+| Escrow size (USDC equivalent) | Suggested `oracle_fee_bps` | Tip on a typical payment |
+|------------------------------|----------------------------|--------------------------|
+| < $5 (micro-payments)         | 200–300 (2–3%)             | $0.02–$0.06              |
+| $5 – $50 (default lane)       | **100 (1%)**               | $0.05–$0.50              |
+| $50 – $500                    | 50 (0.5%)                  | $0.25–$2.50              |
+| > $500 (large escrows)        | 25 (0.25%)                 | $1.25+                   |
+
+50 bps as a single global default is **not** recommended — it does not cover
+priority fees during congestion for sub-$5 payments. Bump to 100 bps as the
+neutral default and reserve 50 bps for high-value lanes where the absolute tip
+is already large.
+
+### Operator self-protection
+
+If you operate an oracle and want to refuse underpriced jobs without waiting
+for a redesign of the on-chain program, set:
+
+```bash
+ORACLE_MIN_VERDICT_TIP_LAMPORTS=20000  # ~$0.003 at $150/SOL
+```
+
+When the projected tip on a pending payment is below this floor, your oracle
+declines to subscribe. The Active Guardian will eventually issue a fail-closed
+REJECT before expiry, the buyer is refunded, and the seller learns to fund
+escrows with a competitive `oracle_fee_bps`. Market discovery without a
+program upgrade.
+
+### Why not put a floor on-chain?
+
+Adding `oracle_min_fee_amount` to `Escrow` and `Payment` would be a Pod-layout
+change — it shifts byte offsets and invalidates all existing accounts. For now,
+the off-chain self-protection knob plus the tiering convention above achieves
+the same outcome without forcing a migration of the live program.
+
+---
+
 ## FAQ
 
 **Q: How do I get paid as an oracle operator?**
-A: Via `oracle_fee_bps` — a per-escrow setting (e.g. 50 bps = 0.5% of payment
-amount). The oracle tip is deducted from the escrowed amount on **both**
-`ReleasePayment` AND `RefundPayment` — as long as `resolution_state != 0`
-(i.e., you issued a verdict). This means you earn for doing your job regardless
-of whether you approved or rejected. The tip goes to your oracle pubkey's token
-account (USDC ATA for SPL payments, or direct lamports for SOL payments). If
-`resolution_state == 0` (you never issued a verdict — e.g., payment expired
-without oracle action), no tip is paid.
+A: Via `oracle_fee_bps` — a per-escrow setting (recommended default 100 bps =
+1% of payment amount; see the tiering table above). The oracle tip is deducted
+from the escrowed amount on **both** `ReleasePayment` AND `RefundPayment` — as
+long as `resolution_state != 0` (i.e., you issued a verdict). This means you
+earn for doing your job regardless of whether you approved or rejected. The
+tip goes to your oracle pubkey's token account (USDC ATA for SPL payments, or
+direct lamports for SOL payments). If `resolution_state == 0` (you never
+issued a verdict — e.g., payment expired without oracle action), no tip is
+paid.
 
 **Q: Can I run multiple profiles in one binary?**
 A: The architecture supports it (register multiple profiles in the registry),
 but v1 convention is one profile per binary for operational isolation.
 
 **Q: Who pays for ConfirmOracle gas?**
-A: Your oracle keypair pays (~5000 lamports per tx). You earn back via
-`oracle_fee_bps` (configured per-escrow, e.g. 50 bps = 0.5% of payment amount).
+A: Your oracle keypair pays (~5000 lamports per tx, plus priority fees during
+congestion). You earn back via `oracle_fee_bps` (configured per-escrow;
+recommended default 100 bps for the $5–$50 lane — see the tiering table above).
 
 **Q: What if my evaluation needs external APIs (e.g. calling the seller's endpoint)?**
 A: Use `ctx.http` (the shared reqwest client). Keep timeouts tight

@@ -414,7 +414,69 @@ properties limit that trust:
 
 ---
 
-## 6. Failure modes
+## 6. Resolution reason codes
+
+When the oracle submits a `ConfirmOracle` transaction, it writes a `resolution_reason` (u16) to the on-chain `Payment` account. These reason codes are divided into two ranges:
+1. **Standard codes (`0` to `255`)**: well-known, interoperable reasons defined by the core `sla-escrow` protocol.
+2. **Custom codes (from `256` onwards)**: family-specific or deployment-specific codes defined by individual oracle profiles.
+
+### Standard resolution reasons (0..=255)
+| Code | Name | Meaning |
+|---|---|---|
+| `0` | `None` | Default for approvals, or when no specific rejection reason applies |
+| `1` | `StatusCodeOutOfRange` | HTTP status code fell outside the SLA-specified range |
+| `2` | `LatencyExceeded` | Response latency exceeded the SLA threshold |
+| `3` | `SchemaValidationFailed` | Response body failed JSON Schema validation |
+| `4` | `RequiredFieldsMissing` | One or more required fields were missing from the response |
+| `5` | `BodyTooShort` | Response body was shorter than the minimum length |
+| `6` | `HashMismatch` | Delivery evidence hash did not match the on-chain commitment |
+| `7` | `EvidenceUnavailable` | Off-chain evidence could not be fetched or was unavailable |
+| `100` | `SLA_UNAVAILABLE` | Active Guardian: SLA bytes not retrievable from registry after retries |
+| `101` | `EVIDENCE_UNAVAILABLE` | Active Guardian: Evidence bytes not retrievable from registry after retries |
+| `102` | `EVALUATION_TIMEOUT` | Active Guardian: Pipeline timeout or max retries exhausted without a verdict |
+| `255` | `GeneralRejection` | Catch-all for standard rejections |
+
+### Custom family ranges
+Custom reason codes are partitioned per oracle family to avoid overlaps:
+- **`256..=319`**: `x402/onchain-transfer/*`
+- **`320..=383`**: `x402/file-delivery/*`
+- **`384..=447`**: Reserved for future `x402/compute-result/*`
+- **`448..=511`**: Reserved for ecosystem-wide additions
+- **`512..=65535`**: Available for deployment-local customization
+
+#### On-chain Transfer Family (`x402/onchain-transfer/*`) custom codes:
+| Code | Name | Meaning |
+|---|---|---|
+| `256` | `TRANSFER_TX_NOT_FOUND` | SPL transfer transaction signature not found on-chain |
+| `257` | `TRANSFER_TX_FAILED` | SPL transfer transaction failed execution |
+| `258` | `TRANSFER_AMOUNT_INSUFFICIENT` | Transferred token amount is less than expected by SLA |
+| `259` | `TRANSFER_MINT_MISMATCH` | Token mint in the transfer transaction does not match SLA |
+| `260` | `TRANSFER_DEADLINE_EXCEEDED` | Transfer block time exceeds the SLA deadline |
+| `261` | `TRANSFER_CLUSTER_MISMATCH` | RPC cluster in SLA does not match oracle cluster |
+| `262` | `TRANSFER_RECIPIENT_NOT_RESOLVABLE` | Expected recipient token account / owner is not resolvable |
+| `263` | `TRANSFER_DIRECTION_MISMATCH` | Transfer direction does not match SLA expectation (`in` / `out`) |
+| `264` | `TRANSFER_EVIDENCE_PREDATES_PAYMENT` | Freshness check failed: transaction block time predates `Payment.created_at` |
+| `265` | `TRANSFER_TX_SIGNATURE_REUSED` | Replay defense: signature was already settled for a different payment |
+| `266` | `TRANSFER_PAYMENT_UID_MISMATCH` | Evidence's `payment_uid` does not match the target `Payment.payment_uid` |
+| `267` | `TRANSFER_BUYER_NONCE_MISMATCH` | Nonce check failed: evidence did not echo SLA's `buyer_nonce` |
+| `268` | `TRANSFER_BLOCK_TIME_MISSING` | Transaction is missing block time and strict block time checking is enabled |
+| `269` | `TRANSFER_SENDER_MISMATCH` | Pinned `sender_owner` was not found or did not sign a negative delta |
+
+#### File Delivery Family (`x402/file-delivery/*`) custom codes:
+| Code | Name | Meaning |
+|---|---|---|
+| `320` | `BLOB_SIZE_OUT_OF_RANGE` | Stored blob size does not fit SLA bounds |
+| `321` | `BLOB_MIME_MISMATCH` | Stored blob MIME type does not match SLA |
+| `322` | `BLOB_ATTESTOR_SIGNATURE_INVALID` | Stored blob attestor signature is invalid (recorded as failed in v1) |
+| `323` | `BLOB_UPLOAD_INCOMPLETE` | Blob upload is incomplete on the storage backend |
+| `324` | `BLOB_PREDATES_PAYMENT` | Freshness check failed: blob registry timestamp predates `Payment.created_at` |
+| `325` | `BLOB_DELIVERY_HASH_REUSED` | Replay defense: delivery hash was already settled for a different payment |
+| `326` | `BLOB_PAYMENT_UID_MISMATCH` | Evidence's `payment_uid` does not match the target `Payment.payment_uid` |
+| `327` | `BLOB_BUYER_NONCE_MISMATCH` | Nonce check failed: evidence did not echo SLA's `buyer_nonce` |
+
+---
+
+## 7. Failure modes
 
 | Failure | Detected by | When | Recovery |
 |---|---|---|---|
@@ -432,7 +494,7 @@ properties limit that trust:
 
 ---
 
-## 7. Versioning
+## 8. Versioning
 
 The protocol's identity is the `profile_id`:
 `x402/oracles/<family>/<profile>/<version>`.
@@ -460,7 +522,7 @@ The protocol's identity is the `profile_id`:
 
 ---
 
-## 8. Quick sequence reference
+## 9. Quick sequence reference
 
 ```
 Phase   Buyer                       Seller                 Oracle             Chain (sla-escrow)

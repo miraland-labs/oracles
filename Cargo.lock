@@ -4752,9 +4752,9 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "sla-escrow-api"
-version = "0.2.10"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "610f379a766260377ae58d3090c5347a01b0f09ebd12c3c339c4a6bef3636956"
+checksum = "92bb1f6c7190257323a1c8728e0711ce1b41627add91e9e964a361e13f762368"
 dependencies = [
  "bincode",
  "borsh 0.10.4",
