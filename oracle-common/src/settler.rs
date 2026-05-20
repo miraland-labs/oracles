@@ -229,8 +229,26 @@ pub async fn settle(
         recent_blockhash,
     );
 
+    // Skip preflight: the chain monitor reacts to `SubmitDelivery` at
+    // `confirmed` commitment, but the public devnet RPC's preflight
+    // pool can lag the leader by a slot or two and momentarily report
+    // the just-created `Payment` PDA as system-owned. That manifests
+    // as "Invalid account owner" preflight failures even when the
+    // account is fully valid on-chain. Real submission goes through
+    // the leader directly, so we simply pay the lamports and let the
+    // runtime re-simulate at submit time.
+    use solana_client::rpc_config::RpcSendTransactionConfig;
+    let send_cfg = RpcSendTransactionConfig {
+        skip_preflight: true,
+        preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Confirmed),
+        ..Default::default()
+    };
     let sig = rpc
-        .send_and_confirm_transaction(&tx)
+        .send_and_confirm_transaction_with_spinner_and_config(
+            &tx,
+            CommitmentConfig::confirmed(),
+            send_cfg,
+        )
         .await
         .map_err(|e| OracleError::Settlement(format!("send_and_confirm: {e}")))?;
 
