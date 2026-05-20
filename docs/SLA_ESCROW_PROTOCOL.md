@@ -534,3 +534,36 @@ content-addressed and verifiable by anyone, anytime.
   `Payment.created_at`); pr402 optional oracle health gate gating
   `/capabilities` annotations and `/build-sla-escrow-payment-tx`
   binding.
+- **1.1** (2026-05-20): Protocol-aligned updates from devnet E2E validation.
+  - **`paymentUidHex`**: pr402's `build-sla-escrow-payment-tx` now accepts
+    `paymentUidHex` (64 lowercase hex chars) as the canonical way for buyers
+    to specify the on-chain `Payment.payment_uid` bytes. When set, pr402 uses
+    those 32 bytes verbatim — no `sanitize_uid` text encoding. Mutually
+    exclusive with the legacy `paymentUid` (string) field. Response includes
+    `paymentUidHex` so callers who didn't pass it can read back the canonical
+    bytes. The SLA's `payment_uid` field MUST equal this hex.
+  - **Seller uploads SLA on paid path**: in the current implementation, the
+    seller's paid-path handler (not the buyer) uploads the canonical SLA bytes
+    to the registry after reconstructing them from the buyer's request params +
+    the extracted `payment_uid`. The buyer never directly touches the registry.
+    Phase 3 in §3 is updated: the "buyer hands SLA to seller" step is now
+    implicit (the seller reconstructs from the 402 envelope fields + on-chain
+    `payment_uid`).
+  - **Active Guardian**: the oracle now retries SLA/evidence fetch with
+    exponential backoff (10s initial, 120s cap, 30 attempts). If artifacts
+    remain unavailable within `ORACLE_REJECT_SAFETY_MARGIN_SEC` (default 600s /
+    10 min) before `expires_at`, the oracle issues a protective REJECT
+    (`resolution_state=2`, `resolution_reason=100/101/102`). This closes the
+    "seller withholds artifacts → oracle ghosted → seller self-releases" attack
+    vector. See `oracles/docs/ARCHITECTURE.md` §Active Guardian.
+  - **Oracle's stricter cutoff**: the oracle's reject margin (10 min) is
+    intentionally larger than the on-chain `delivery_cutoff_seconds` (5 min).
+    Sellers must deliver and upload well before the deadline; last-second
+    delivery is risky.
+  - **`cluster` field in SLA**: the `TransferSla` (onchain-transfer family)
+    now requires a `cluster` field (`"devnet"` / `"mainnet-beta"` /
+    `"testnet"`) so the oracle can verify it matches its own RPC cluster.
+  - **Escrow PDA as `payTo`**: for sla-escrow, `accepts[].payTo` MUST be the
+    per-asset escrow PDA (derived from `[b"escrow", USDC_mint, bank_pda]`),
+    NOT the merchant wallet. The merchant wallet goes in
+    `accepts[].extra.merchantWallet`. pr402's verify path enforces this.
