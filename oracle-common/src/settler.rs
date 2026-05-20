@@ -206,6 +206,17 @@ pub async fn settle(
         resolution_reason,
     );
 
+    // Diagnostic: log every account meta the SDK produced so a
+    // settlement failure is immediately traceable to a specific PDA
+    // (vs. having to re-derive PDAs from logs after the fact).
+    info!(
+        "ConfirmOracle accounts for payment {payment_uid_hex}: {:?}",
+        ix.accounts
+            .iter()
+            .map(|a| (a.pubkey.to_string(), a.is_signer, a.is_writable))
+            .collect::<Vec<_>>()
+    );
+
     let recent_blockhash = rpc
         .get_latest_blockhash()
         .await
