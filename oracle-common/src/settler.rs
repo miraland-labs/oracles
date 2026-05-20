@@ -189,13 +189,17 @@ pub async fn settle(
     let resolution_state: u8 = if approved { 1 } else { 2 };
     let payment_uid_hex = hex::encode(job.payment_uid);
 
-    // The CLI helper `payment_pda(uid_str, bank)` derives the same PDA the on-chain
-    // program checks, so the SDK's `confirm_oracle(...)` signer set is identical
-    // regardless of which family produced the verdict.
-    let ix = EscrowSdk::confirm_oracle(
+    // The `_from_uid_bytes` SDK variant derives the payment PDA from the
+    // raw 32 bytes of the on-chain `Payment.payment_uid`, NOT from a
+    // string. Routing the legacy `confirm_oracle(uid_str, ...)` helper
+    // would re-encode the hex *string* via `normalize_payment_uid`
+    // (zero-padding the first 32 ASCII bytes into the seed), producing
+    // a different PDA than the one the buyer's FundPayment created.
+    // The bytes variant skips that step entirely.
+    let ix = EscrowSdk::confirm_oracle_from_uid_bytes(
         config.oracle_pubkey(),
         job.mint,
-        &payment_uid_hex,
+        &job.payment_uid,
         job.delivery_hash,
         resolution_hash,
         resolution_state,
@@ -206,8 +210,6 @@ pub async fn settle(
         .get_latest_blockhash()
         .await
         .map_err(|e| OracleError::Settlement(format!("get_latest_blockhash: {e}")))?;
-    let oracle_pubkey = config.oracle_pubkey();
-    let _ = oracle_pubkey; // ensures the keypair has been read
 
     let tx = Transaction::new_signed_with_payer(
         &[ix],
