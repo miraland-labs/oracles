@@ -202,6 +202,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: None,
+            retry_count: 0,
         };
         let ctx = EvaluationContext {
             rpc: &rpc,
@@ -239,6 +240,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: None,
+            retry_count: 0,
         };
         let ctx = EvaluationContext {
             rpc: &rpc,
@@ -272,6 +274,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: None,
+            retry_count: 0,
         };
         let ctx = EvaluationContext {
             rpc: &rpc,
@@ -330,6 +333,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: None,
+            retry_count: 0,
         };
         let ledger: std::sync::Arc<dyn oracle_common::evaluator::LedgerProbe> =
             std::sync::Arc::new(StubLedger {
@@ -373,6 +377,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: None,
+            retry_count: 0,
         };
         let ledger: std::sync::Arc<dyn oracle_common::evaluator::LedgerProbe> =
             std::sync::Arc::new(StubLedger {
@@ -446,6 +451,7 @@ mod tests {
                 created_at: 0,
                 delivery_cutoff_seconds: 0,
                 sla_bytes: None,
+            retry_count: 0,
             };
             let ctx = EvaluationContext { rpc: &rpc, http: &http, job: &job, strict: true, ledger: None };
 

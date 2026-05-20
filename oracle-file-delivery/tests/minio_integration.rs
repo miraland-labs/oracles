@@ -188,6 +188,7 @@ async fn minio_round_trip_5mib_blob() {
         created_at: 0,
         delivery_cutoff_seconds: 0,
         sla_bytes: Some(Bytes::from(serde_json::to_vec(&sla).unwrap())),
+        retry_count: 0,
     };
     let rpc: Arc<RpcClient> = Arc::new(RpcClient::new("http://127.0.0.1:8899".into()));
     let http = reqwest::Client::new();

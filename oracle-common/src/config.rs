@@ -128,6 +128,18 @@ pub struct OracleConfig {
     // Chain monitor hardening
     pub require_event_match: bool,
     pub backfill_lookback_signatures: usize,
+
+    // Active Guardian: retry + fail-closed reject
+    /// Initial delay (seconds) before the first retry of a failed pipeline job.
+    pub guardian_retry_initial_delay_sec: u64,
+    /// Maximum delay cap (seconds) for exponential backoff between retries.
+    pub guardian_retry_max_delay_sec: u64,
+    /// Maximum number of retry attempts before giving up and issuing a reject.
+    pub guardian_max_retry_attempts: u32,
+    /// Safety margin (seconds) before `expires_at` at which the oracle issues a
+    /// protective REJECT if evaluation hasn't completed. Must be strictly larger
+    /// than the on-chain `Config.delivery_cutoff_seconds` (default 300s).
+    pub guardian_reject_safety_margin_sec: i64,
 }
 
 impl OracleConfig {
@@ -272,6 +284,22 @@ impl OracleConfig {
             job_channel_capacity,
             require_event_match,
             backfill_lookback_signatures,
+            guardian_retry_initial_delay_sec: env::var("ORACLE_RETRY_INITIAL_DELAY_SEC")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10),
+            guardian_retry_max_delay_sec: env::var("ORACLE_RETRY_MAX_DELAY_SEC")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(120),
+            guardian_max_retry_attempts: env::var("ORACLE_MAX_RETRY_ATTEMPTS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(30),
+            guardian_reject_safety_margin_sec: env::var("ORACLE_REJECT_SAFETY_MARGIN_SEC")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(600),
         })
     }
 }

@@ -33,7 +33,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     trace::TraceLayer,
@@ -74,6 +74,10 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub rpc: Arc<RpcClient>,
     pub profiles: Arc<ProfileRegistry>,
+    /// Channel sender for re-queuing jobs (Active Guardian retry path).
+    /// Cloned into spawned retry tasks so they can push the job back after
+    /// the backoff sleep completes.
+    pub job_tx: mpsc::Sender<EvaluationJob>,
 }
 
 impl AppState {

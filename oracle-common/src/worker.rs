@@ -125,22 +125,128 @@ pub async fn run_worker(state: Arc<AppState>, mut job_rx: mpsc::Receiver<Evaluat
             }
             Ok(Err(e)) => {
                 error!("pipeline error for {uid_hex}: {e}");
-                let should_dead_letter = attempt_count >= state.config.dead_letter_max_attempts;
-                if let Some(db) = &state.db {
-                    let _ = if should_dead_letter {
-                        db.record_dead_letter(&job, &e.to_string()).await
+
+                // ─── Active Guardian: retry or fail-closed reject ───────────
+                if e.is_retriable() {
+                    let now = chrono::Utc::now().timestamp();
+                    let near_expiry =
+                        now > job.expires_at - state.config.guardian_reject_safety_margin_sec;
+                    let retries_exhausted =
+                        job.retry_count >= state.config.guardian_max_retry_attempts;
+
+                    if near_expiry || retries_exhausted {
+                        // Fail-closed: protect buyer by issuing REJECT before expiry.
+                        let reason_code = if retries_exhausted {
+                            crate::error::guardian_reason::EVALUATION_TIMEOUT
+                        } else {
+                            e.guardian_reason_code()
+                        };
+                        info!(
+                            "Guardian REJECT for {uid_hex}: near_expiry={near_expiry}, \
+                             retries_exhausted={retries_exhausted}, reason={reason_code}"
+                        );
+                        // Check eligibility first to avoid wasting SOL on already-resolved payments.
+                        let eligible = settler::is_eligible(&state.rpc, &state.config, &job)
+                            .await
+                            .unwrap_or(false);
+                        if eligible {
+                            let resolution_hash = settler::compute_resolution_hash(
+                                &job,
+                                "x402/oracles/guardian/v1",
+                                &crate::types::EvaluationResult {
+                                    approved: false,
+                                    resolution_reason: reason_code,
+                                    checks: vec![],
+                                },
+                                serde_json::json!({
+                                    "reason": e.to_string(),
+                                    "retryCount": job.retry_count,
+                                }),
+                            )
+                            .unwrap_or([0u8; 32]);
+                            match settler::settle(
+                                &state.rpc,
+                                &state.config,
+                                &job,
+                                false,
+                                reason_code,
+                                resolution_hash,
+                            )
+                            .await
+                            {
+                                Ok(sig) => {
+                                    info!("Guardian reject settled for {uid_hex}: sig={sig}");
+                                    let mut h = state.health.write().await;
+                                    h.guardian_rejects_issued =
+                                        h.guardian_rejects_issued.saturating_add(1);
+                                }
+                                Err(settle_err) => {
+                                    warn!(
+                                        "Guardian reject tx failed for {uid_hex}: {settle_err} \
+                                         (payment may already be resolved)"
+                                    );
+                                }
+                            }
+                        } else {
+                            info!(
+                                "Guardian skip for {uid_hex}: payment no longer eligible \
+                                 (already resolved or expired)"
+                            );
+                        }
+                        // Remove from in-flight tracking regardless of settle outcome.
+                        attempts_mem.lock().await.remove(&uid);
+                        if let Some(db) = &state.db {
+                            let _ = db
+                                .record_dead_letter(&job, &format!("guardian reject: {e}"))
+                                .await;
+                        }
                     } else {
-                        db.record_failed(&job, &e.to_string()).await
-                    };
-                }
-                if !should_dead_letter {
-                    processed_mem.lock().await.remove(&uid);
-                }
-                let mut stats = state.stats.write().await;
-                stats.total_errors += 1;
-                if should_dead_letter {
-                    stats.total_dead_letter += 1;
-                    attempts_mem.lock().await.remove(&uid);
+                        // Re-queue with exponential backoff.
+                        let mut requeued_job = job.clone();
+                        requeued_job.retry_count += 1;
+                        let delay_sec = state
+                            .config
+                            .guardian_retry_initial_delay_sec
+                            .saturating_mul(2u64.saturating_pow(requeued_job.retry_count.min(10)))
+                            .min(state.config.guardian_retry_max_delay_sec);
+                        info!(
+                            "Guardian retry {}/{} for {uid_hex} in {delay_sec}s",
+                            requeued_job.retry_count, state.config.guardian_max_retry_attempts
+                        );
+                        {
+                            let mut h = state.health.write().await;
+                            h.guardian_retries_total = h.guardian_retries_total.saturating_add(1);
+                        }
+                        // Allow the uid to be re-processed on the next receive.
+                        processed_mem.lock().await.remove(&uid);
+                        // Sleep then re-send to the channel. If the channel is full
+                        // or closed, the job is lost — acceptable because the backfill
+                        // on next restart will re-emit it.
+                        let tx_clone = state.job_tx.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_secs(delay_sec)).await;
+                            let _ = tx_clone.send(requeued_job).await;
+                        });
+                    }
+                } else {
+                    // Non-retriable error: dead-letter as before.
+                    let should_dead_letter = attempt_count >= state.config.dead_letter_max_attempts;
+                    if let Some(db) = &state.db {
+                        let _ = if should_dead_letter {
+                            db.record_dead_letter(&job, &e.to_string()).await
+                        } else {
+                            db.record_failed(&job, &e.to_string()).await
+                        };
+                    }
+                    if !should_dead_letter {
+                        processed_mem.lock().await.remove(&uid);
+                    }
+                    let mut stats = state.stats.write().await;
+                    stats.total_errors += 1;
+                    if should_dead_letter {
+                        stats.total_dead_letter += 1;
+                        attempts_mem.lock().await.remove(&uid);
+                    }
                 }
             }
             Err(_) => {

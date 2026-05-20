@@ -120,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ---- App state ----
     let runtime_health = Arc::new(RwLock::new(RuntimeHealth::default()));
+    let (job_tx, job_rx) = mpsc::channel(config.job_channel_capacity);
     let state = Arc::new(AppState {
         config: config.clone(),
         stats: RwLock::new(OracleStats::default()),
@@ -130,10 +131,10 @@ async fn main() -> anyhow::Result<()> {
         http: http.clone(),
         rpc: rpc.clone(),
         profiles: Arc::new(profiles),
+        job_tx: job_tx.clone(),
     });
 
     // ---- Chain monitor + backfill ----
-    let (job_tx, job_rx) = mpsc::channel(config.job_channel_capacity);
 
     {
         let cfg = Arc::new(config.clone());

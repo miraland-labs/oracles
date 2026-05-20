@@ -178,6 +178,7 @@ pub async fn read_payment(
         created_at: payment.created_at,
         delivery_cutoff_seconds: payment.delivery_cutoff_seconds,
         sla_bytes: None, // hoisted in by the chain monitor below if available
+        retry_count: 0,
     }))
 }
 
@@ -592,6 +593,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: None,
+            retry_count: 0,
         };
         assert!(event_matches_job(&[ev], &job));
     }
@@ -610,6 +612,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: None,
+            retry_count: 0,
         };
         // Empty events → permissive (caller decides via require_event_match).
         assert!(event_matches_job(&[], &job));
@@ -635,6 +638,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: None,
+            retry_count: 0,
         };
         assert!(!event_matches_job(&[ev], &job));
     }

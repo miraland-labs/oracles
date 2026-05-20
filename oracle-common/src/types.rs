@@ -46,6 +46,11 @@ pub struct EvaluationJob {
     /// before the registry was reachable); the pipeline will then perform a one-shot
     /// fetch itself.
     pub sla_bytes: Option<Bytes>,
+    /// Number of times this job has been re-queued due to retriable failures
+    /// (SLA/evidence fetch 404, transient evaluation errors). Starts at 0;
+    /// incremented by the worker on each re-queue. Used to compute exponential
+    /// backoff delay and to decide when to give up and issue a guardian REJECT.
+    pub retry_count: u32,
 }
 
 /// Result of the oracle's SLA evaluation.
@@ -105,6 +110,10 @@ pub struct RuntimeHealth {
     /// Most recently observed chain slot (via log notifications). Informational for
     /// backfill diagnostics.
     pub last_seen_slot: u64,
+    /// Active Guardian: count of protective REJECT verdicts issued since startup.
+    pub guardian_rejects_issued: u64,
+    /// Active Guardian: cumulative retry attempts across all jobs since startup.
+    pub guardian_retries_total: u64,
 }
 
 /// Minimal SLA envelope the dispatcher reads to determine which `OracleEvaluator` to
@@ -135,6 +144,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes: Some(Bytes::from_static(b"hello")),
+            retry_count: 0,
         };
         let cloned = job.clone();
         assert_eq!(job.payment_uid, cloned.payment_uid);

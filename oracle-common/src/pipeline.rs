@@ -146,6 +146,7 @@ mod tests {
             created_at: 0,
             delivery_cutoff_seconds: 0,
             sla_bytes,
+            retry_count: 0,
         }
     }
 

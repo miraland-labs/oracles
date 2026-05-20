@@ -45,6 +45,7 @@ fn make_job(uid: [u8; 32]) -> EvaluationJob {
         created_at: 0,
         delivery_cutoff_seconds: 0,
         sla_bytes: Some(Bytes::from_static(b"{}")),
+        retry_count: 0,
     }
 }
 

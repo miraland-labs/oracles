@@ -46,6 +46,7 @@ fn make_job(uid_byte: u8, sla_hash_byte: u8) -> EvaluationJob {
         created_at: 0,
         delivery_cutoff_seconds: 0,
         sla_bytes: Some(Bytes::from_static(b"{\"profile_id\":\"x402/test/v1\"}")),
+        retry_count: 0,
     }
 }
 

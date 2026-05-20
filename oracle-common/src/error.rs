@@ -52,6 +52,46 @@ impl From<solana_client::client_error::ClientError> for OracleError {
     }
 }
 
+// ─── Active Guardian helpers ────────────────────────────────────────────────
+
+/// Guardian resolution reason codes for protective rejects.
+/// These are written to `Payment.resolution_reason` (u16) on-chain.
+pub mod guardian_reason {
+    /// SLA bytes not retrievable from registry after retries.
+    pub const SLA_UNAVAILABLE: u16 = 100;
+    /// Evidence bytes not retrievable from registry after retries.
+    pub const EVIDENCE_UNAVAILABLE: u16 = 101;
+    /// Pipeline did not complete within the oracle's safety margin.
+    pub const EVALUATION_TIMEOUT: u16 = 102;
+}
+
+impl OracleError {
+    /// Whether this error class is transient and the job should be retried
+    /// (SLA/evidence not yet in registry, transient evaluation failure).
+    /// Structural errors (unknown profile, settlement, chain) are NOT retriable.
+    pub fn is_retriable(&self) -> bool {
+        matches!(
+            self,
+            OracleError::SlaParse(_)
+                | OracleError::EvidenceNotFound(_)
+                | OracleError::DeliveryParse(_)
+                | OracleError::Registry(_)
+                | OracleError::Evaluation(_)
+        )
+    }
+
+    /// Map a retriable error to the appropriate guardian resolution reason code.
+    pub fn guardian_reason_code(&self) -> u16 {
+        match self {
+            OracleError::SlaParse(_) => guardian_reason::SLA_UNAVAILABLE,
+            OracleError::EvidenceNotFound(_) | OracleError::Registry(_) => {
+                guardian_reason::EVIDENCE_UNAVAILABLE
+            }
+            _ => guardian_reason::EVALUATION_TIMEOUT,
+        }
+    }
+}
+
 impl From<reqwest::Error> for OracleError {
     fn from(e: reqwest::Error) -> Self {
         // Most reqwest errors during evidence fetch surface as "evidence unreachable";
