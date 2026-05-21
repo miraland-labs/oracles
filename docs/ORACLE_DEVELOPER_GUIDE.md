@@ -103,7 +103,9 @@ oracle participates in. Four actors collaborate:
                                                                                    or 2 (reject)
 
  15. ReleasePayment (if approved) ──────────────────────────────► USDC → seller
+     (seller or any party calls)
      OR RefundPayment (if rejected) ────────────────────────────► USDC → buyer
+     (buyer calls after cooldown elapses)
 ```
 
 ### What the oracle does NOT do
@@ -148,7 +150,7 @@ focuses on what YOU (the oracle developer) need to implement.
 │  │  • Chain monitor (logsSubscribe + backfill)        │     │
 │  │  • Worker (retry + Active Guardian)                │     │
 │  │  • Settler (ConfirmOracle tx builder)              │     │
-│  │  • HTTP server (/health, /v1/registry/*)           │     │
+│  │  • HTTP server (/health, /v1/policy, /v1/registry/*) │     │
 │  │  • Registry (SLA + evidence storage)               │     │
 │  │  • Fetcher (content-addressed retrieval + verify)  │     │
 │  └────────────────────────────────────────────────────┘     │
@@ -180,6 +182,38 @@ You write ~3-4 files. `oracle-common` handles everything else.
 - [`SLA_ESCROW_PROTOCOL.md`](./SLA_ESCROW_PROTOCOL.md) — the full cross-actor protocol
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — oracle internals + Active Guardian design
 - One existing normative spec (e.g. `oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md`)
+
+### Quick start (5 minutes to a running oracle on devnet)
+
+```bash
+# 1. Clone and build
+cd oracles/
+cargo build --release --bin oracle-onchain-transfer
+
+# 2. Generate a devnet keypair (fund with ~0.1 SOL for gas)
+solana-keygen new -o /tmp/oracle-dev.json
+solana airdrop 0.1 $(solana-keygen pubkey /tmp/oracle-dev.json) --url devnet
+
+# 3. Start with minimal config (Postgres optional for first run)
+ORACLE_KEYPAIR_PATH=/tmp/oracle-dev.json \
+ORACLE_REGISTRY_BACKEND=local \
+SOLANA_RPC_URL=https://api.devnet.solana.com \
+SOLANA_WS_URL=wss://api.devnet.solana.com \
+TRANSFER_CLUSTER=devnet \
+cargo run --release --bin oracle-onchain-transfer
+
+# 4. Verify it's alive
+curl -s http://localhost:4020/health | jq .status
+curl -s http://localhost:4020/v1/policy | jq .
+```
+
+You now have a running oracle that watches for `SubmitDelivery` events on
+devnet. To trigger an evaluation, fund a payment with your oracle's pubkey as
+`oracle_authority`, then have a seller call `SubmitDelivery`. The oracle will
+fetch, evaluate, and settle automatically.
+
+For your own family, replace `oracle-onchain-transfer` with your new crate
+and follow Steps 1-8 below.
 
 ---
 
@@ -472,6 +506,27 @@ It must define:
 4. **Resolution reason codes** — what each code means for dispute resolution.
 5. **Versioning policy** — when you bump the version, what breaks.
 
+### Resolution reason code ranges
+
+Pick your custom codes from the allocated range for your family. The on-chain
+`resolution_reason` is a `u16`:
+
+| Range | Owner |
+|---|---|
+| `0` | Approval (no reason) |
+| `1..=7`, `255` | Standard rejection reasons (cross-oracle interoperable) |
+| `100..=102` | Active Guardian protective rejects (built into `oracle-common`) |
+| `200..=219` | Operator-economics refusals (built into `oracle-common`) |
+| `256..=319` | `x402/onchain-transfer/*` family |
+| `320..=383` | `x402/file-delivery/*` family |
+| `384..=447` | Reserved (`x402/compute-result/*` future) |
+| `448..=511` | Reserved ecosystem-wide |
+| `512..=65535` | Per-deployment / your custom family |
+
+If your family is new and not yet allocated a range, use `512+` and document
+your codes in your NORMATIVE.md. Contact the ecosystem maintainers to reserve
+a dedicated range once your family stabilizes.
+
 See existing specs for format:
 - `oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md`
 - `oracle-api-quality/spec/api-quality-v1/NORMATIVE.md`
@@ -514,6 +569,9 @@ ENTRYPOINT ["/usr/local/bin/oracle"]
 | `ORACLE_RETRY_MAX_DELAY_SEC` | no | `120` | Maximum retry backoff cap (seconds) |
 | `ORACLE_MAX_RETRY_ATTEMPTS` | no | `30` | Max retries before protective reject |
 | `ORACLE_REJECT_SAFETY_MARGIN_SEC` | no | `600` | Safety margin before expiry to issue reject |
+| `ORACLE_TIP_FLOOR_ENABLED` | no | `false` | Master switch for operator tip-floor gate. When `false`, every eligible job is settled. See [Operator Economics](#operator-economics-recommended-oracle_fee_bps). |
+| `ORACLE_MIN_VERDICT_TIP_DEFAULT_RAW` | no | (USDC fallback) | Default tip floor in raw mint units. Only consulted when `ORACLE_TIP_FLOOR_ENABLED=true`. |
+| `ORACLE_MIN_VERDICT_TIP_BY_MINT_RAW` | no | `{}` | Per-mint tip floor overrides as JSON, e.g. `{"<mint_pubkey>": 5000}`. Wins over default. Only consulted when `ORACLE_TIP_FLOOR_ENABLED=true`. |
 
 **S3 Backend Configuration (Only required when `ORACLE_REGISTRY_BACKEND=s3`):**
 
@@ -541,6 +599,52 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 ```
+
+---
+
+## Testing Your Oracle
+
+### Unit tests (no chain, no DB)
+
+Your evaluator is a pure function: same SLA + same evidence → same verdict.
+Test it directly:
+
+```rust
+#[tokio::test]
+async fn rejects_when_latency_exceeds_sla() {
+    let evaluator = GpuInferenceEvaluator;
+    let sla = GpuInferenceSla { max_latency_ms: 100, /* ... */ };
+    let evidence = GpuInferenceEvidence { latency_ms: 200, /* ... */ };
+    let ctx = /* mock EvaluationContext */;
+    let result = evaluator.evaluate(&ctx, &sla, &evidence).await.unwrap();
+    assert!(!result.approved);
+    assert_eq!(result.resolution_reason, 2); // LatencyExceeded
+}
+```
+
+### Manual evaluation (live oracle, no on-chain payment)
+
+Hit `POST /evaluate` with a raw SLA + evidence payload. Requires
+`ORACLE_OPERATOR_TOKEN` or `ORACLE_ALLOW_UNAUTHENTICATED_MANUAL_EVALUATE=true`:
+
+```bash
+curl -X POST http://localhost:4020/evaluate \
+  -H "Authorization: Bearer $ORACLE_OPERATOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sla": {...}, "evidence": {...}}'
+```
+
+Returns the verdict without touching the chain — useful for integration
+testing before a seller goes live.
+
+### Devnet end-to-end
+
+Use the existing test scripts as a reference:
+- `oracle-onchain-transfer/tests/devnet/transfer_v1.sh`
+- `spl-token-balance-serverless/scripts/test-buy-spl-token-devnet.sh`
+
+The flow: fund a payment → seller delivers → oracle evaluates → check
+`Payment.resolution_state` on-chain.
 
 ---
 
@@ -575,6 +679,7 @@ integrate. Here's what you must provide:
 |----------|-------|---------|
 | **NORMATIVE.md** | Published URL (GitHub) | Sellers read this to know what SLA fields to support and what evidence to produce |
 | **Registry endpoint** | Your deployed oracle's `/v1/registry/*` | Sellers upload SLA + evidence here |
+| **Policy endpoint** | Your deployed oracle's `GET /v1/policy` | Sellers check your tip-floor config and supported profiles before advertising you |
 | **Oracle pubkey** | Your keypair's public key | Sellers include this in their 402 envelope's `oracleAuthorities[]` |
 | **Profile ID** | e.g. `x402/oracles/gpu-inference/v1` | Sellers include this in their 402 envelope's `profileId` |
 | **SLA JSON Schema** | In your NORMATIVE.md or as a separate `.json` | Sellers validate their SLA construction against this |
@@ -623,6 +728,7 @@ ecosystem. Code against these confidently:
 - `EvaluationResult`: `approved: bool`, `resolution_reason: u16`, `checks: Vec<CheckResult>`
 - Resolution hash recipe: `x402/oracles/resolution-envelope/v1` (fixed key order, SHA-256)
 - Registry HTTP API: `POST /v1/registry/sla`, `POST /v1/registry/delivery`, `GET /v1/registry/<hash>`
+- Policy HTTP API: `GET /v1/policy` — public, no auth. Returns operator pubkey, tip-floor config, guardian timing, registered profiles.
 
 ### Wire conventions
 - SLA `profile_id` field: exact-match dispatch (no aliases, no prefix match)
@@ -651,16 +757,16 @@ i.e. 5%). It has no built-in floor. Operators and Facilitators are responsible
 for picking a tip that pays for the cost of issuing `ConfirmOracle` and any
 external evaluation work.
 
-### Cost breakdown per verdict (Solana mainnet, ~$150/SOL)
+### Cost breakdown per verdict (Solana mainnet, ~$100/SOL)
 
 | Cost line | Typical |
 |-----------|---------|
-| Solana base fee (5000 lamports) | ~$0.00075 |
-| Priority fee (congested periods) | $0.003–$0.015 |
+| Solana base fee (5000 lamports) | ~$0.0005 |
+| Priority fee (congested periods) | $0.002–$0.010 |
 | RPC `getTransaction` / `getAccountInfo` | $0.000–$0.005 (depending on provider) |
 | Active Guardian retries (worst case ~30 fetches) | up to $0.030 in RPC budget |
 
-A single happy-path verdict costs roughly $0.005–$0.020 to land on-chain.
+A single happy-path verdict costs roughly **$0.003–$0.015** to land on-chain.
 Anything below that is a net loss for the operator and signals that the rate
 is too low.
 
@@ -684,18 +790,67 @@ is already large.
 
 ### Operator self-protection
 
-If you operate an oracle and want to refuse underpriced jobs without waiting
-for a redesign of the on-chain program, set:
+Tip-floor enforcement is **OFF by default** — out-of-the-box, the oracle
+settles every eligible job regardless of the projected tip, just as it did
+before the operator-economics layer existed. To opt in, set:
 
 ```bash
-ORACLE_MIN_VERDICT_TIP_LAMPORTS=20000  # ~$0.003 at $150/SOL
+ORACLE_TIP_FLOOR_ENABLED=true                    # master switch (default false)
+
+# Default floor across all mints (raw mint units; USDC has 6 decimals)
+ORACLE_MIN_VERDICT_TIP_DEFAULT_RAW=5000          # ~$0.005 USDC
+
+# Per-mint overrides (JSON map; highest priority)
+ORACLE_MIN_VERDICT_TIP_BY_MINT_RAW='{
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": 5000,
+  "So11111111111111111111111111111111111111112": 30000
+}'
 ```
 
-When the projected tip on a pending payment is below this floor, your oracle
-declines to subscribe. The Active Guardian will eventually issue a fail-closed
-REJECT before expiry, the buyer is refunded, and the seller learns to fund
-escrows with a competitive `oracle_fee_bps`. Market discovery without a
-program upgrade.
+When the projected tip on a pending payment is below the resolved floor, your
+oracle eagerly issues a `ConfirmOracle` rejection
+(`resolution_state = 2`, `resolution_reason = 200` /
+`TIP_BELOW_OPERATOR_FLOOR`). The on-chain `Payment.resolution_state` flips
+to Rejected immediately. The rejection is observable to reputation indexers,
+so sellers can switch to oracles whose floors match their pricing.
+
+### What "rejection" actually does on-chain
+
+A rejection verdict **does not move tokens**. `ConfirmOracle` only writes
+`resolution_state = 2`; the buyer's funds remain in escrow until the buyer
+calls `RefundPayment` (after `Config.refund_cooldown_seconds` elapses, default
+24h, floor 1h). See [`SLA_ESCROW_PROTOCOL.md` Phase 8](./SLA_ESCROW_PROTOCOL.md)
+for the full refund authorization rules.
+
+The cost of an economic refusal is one Solana transaction (~5000 lamports +
+priority fee), paid by your oracle keypair. That's the operator's tax for
+refusing the job, paid in transparency.
+
+### Defaults if you set nothing
+
+`oracle-common` ships a USDC-first default. If `ORACLE_MIN_VERDICT_TIP_DEFAULT_RAW`
+is unset, the daemon applies a `5000` raw (`$0.005`) floor only when the
+job's mint is **USDC mainnet** (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`)
+or **USDC devnet** (`4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). Other
+mints pass through (zero floor) so you never silently refuse jobs in a token
+you didn't explicitly opt into. Setting the per-mint map or the default is how
+you opt in to non-USDC tip floors.
+
+The resolution order on each job is:
+1. `ORACLE_MIN_VERDICT_TIP_BY_MINT_RAW[<mint>]` if present.
+2. `ORACLE_MIN_VERDICT_TIP_DEFAULT_RAW` if set.
+3. The USDC convention (`5000` raw) for USDC mints.
+4. `0` (accept anything) for unrecognized mints.
+
+### Why thresholds are stored as raw units, not dollars
+
+The daemon never consults a price feed. Price discovery is the operator's
+concern, not the oracle's runtime. If you want to maintain a stable USD-equivalent
+floor for SOL or another volatile mint, run a tiny sidecar cron that queries
+your favorite price source (Pyth, Switchboard, CoinGecko) and writes the
+resulting raw-units value into the parameters table. The daemon picks up the
+new value at the next config refresh — the deterministic evaluation core
+stays untouched.
 
 ### Why not put a floor on-chain?
 

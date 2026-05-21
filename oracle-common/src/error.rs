@@ -65,6 +65,21 @@ pub mod guardian_reason {
     pub const EVALUATION_TIMEOUT: u16 = 102;
 }
 
+/// Operator-economics rejection codes. Written to `Payment.resolution_reason`
+/// (u16) when the oracle declines to evaluate a job for cost-recovery reasons
+/// (the projected `oracle_fee_bps × amount` tip falls below the operator's
+/// per-mint floor — see [`crate::economics`]).
+///
+/// These are STANDARD codes (not Custom): any oracle, any family may emit them,
+/// and any indexer / scorecard can interpret them uniformly. Reserved range is
+/// `200..=219`; pick a small allocation now, leave headroom for future
+/// economic-policy reasons (e.g. blacklist, capacity).
+pub mod economic_reason {
+    /// Projected tip is below the operator's resolved floor for this mint.
+    /// Buyer is refunded immediately via this REJECT (not after expiry).
+    pub const TIP_BELOW_OPERATOR_FLOOR: u16 = 200;
+}
+
 impl OracleError {
     /// Whether this error class is transient and the job should be retried
     /// (SLA/evidence not yet in registry, transient evaluation failure).

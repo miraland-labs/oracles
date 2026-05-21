@@ -99,6 +99,7 @@ pub fn create_core_router(state: Arc<AppState>) -> Router {
         .route("/health", get(health))
         .route("/stats", get(stats))
         .route("/metrics", get(metrics))
+        .route("/v1/policy", get(policy))
         .route("/evaluate", post(manual_evaluate))
         .layer(cors_layer(&state.config))
         .layer(TraceLayer::new_for_http())
@@ -135,6 +136,7 @@ async fn root() -> impl IntoResponse {
             "GET /health":   "health",
             "GET /stats":    "JSON counters",
             "GET /metrics":  "Prometheus text exposition",
+            "GET /v1/policy": "operator policy snapshot (tip-floor config + guardian timing)",
             "POST /evaluate": "operator-only manual re-evaluation"
         }
     }))
@@ -177,6 +179,46 @@ async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             "registered_profiles": state.profiles.known_ids(),
         })),
     )
+}
+
+/// `GET /v1/policy` — public, no auth. Returns the operator's current
+/// tip-floor configuration and guardian timing so sellers / indexers can
+/// pre-select oracles whose economics match their payment profile.
+///
+/// When `tip_floor_enabled` is `false`, the `minVerdictTip*` fields are
+/// `null` — the oracle accepts every eligible job regardless of tip size.
+async fn policy(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let cfg = &state.config;
+
+    let min_by_mint: Option<serde_json::Value> = if cfg.tip_floor_enabled {
+        let map: std::collections::HashMap<String, u64> = cfg
+            .min_verdict_tip_by_mint_raw
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect();
+        if map.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_value(map).unwrap_or_default())
+        }
+    } else {
+        None
+    };
+
+    Json(serde_json::json!({
+        "operatorPubkey": cfg.oracle_pubkey().to_string(),
+        "programId": cfg.escrow_program_id.to_string(),
+        "tipFloorEnabled": cfg.tip_floor_enabled,
+        "minVerdictTipDefaultRaw": if cfg.tip_floor_enabled {
+            cfg.min_verdict_tip_default_raw
+        } else {
+            None
+        },
+        "minVerdictTipByMintRaw": min_by_mint,
+        "guardianRejectSafetyMarginSec": cfg.guardian_reject_safety_margin_sec,
+        "guardianMaxRetryAttempts": cfg.guardian_max_retry_attempts,
+        "registeredProfiles": state.profiles.known_ids(),
+    }))
 }
 
 async fn registry_probe(state: &AppState) -> bool {

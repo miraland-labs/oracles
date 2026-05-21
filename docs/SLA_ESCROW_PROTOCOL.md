@@ -307,18 +307,42 @@ artifacts, evaluates them against the SLA, and signs `ConfirmOracle`.
 - `Payment.resolution_hash = <32 bytes>`.
 - A `PaymentOracleConfirmedEvent` is emitted.
 
-### Phase 8 — Settlement (anyone)
+### Phase 8 — Settlement
 
 **Goal**: tokens move out of escrow per the verdict.
 
 After `ConfirmOracle`:
-- **Approved**: anyone (buyer, seller, or pr402's `/settle`) can call
+- **Approved**: any party (buyer, seller, or pr402's `/settle`) can call
   `ReleasePayment`. Tokens flow to `Payment.seller` (the merchant
   payout wallet, which may be a SplitVault for fee sharding).
-- **Rejected**: anyone can call `RefundPayment`. Tokens flow back to
-  `Payment.buyer`.
-- **Expired without `ConfirmOracle`**: anyone can call `RefundPayment`
-  after `expires_at`. Buyer reclaims.
+- **Rejected, before `expires_at`**: only the **buyer**, **seller**, or
+  **bank authority** may call `RefundPayment`, and the buyer is gated by
+  `Config.refund_cooldown_seconds` (the seller and bank authority have no
+  cooldown). The cooldown's program-enforced range is `0` (disabled — not
+  permitted in the live mainnet/devnet deployment) or `[3600, 604800]`
+  seconds (1 hour to 7 days). The current pr402 deployment runs at
+  `86400` (24 hours); operators may shorten this via `UpdateConfig` to
+  as little as one hour. **Buyers should always read the live
+  `Config.refund_cooldown_seconds` from chain — don't hard-code it.**
+- **Expired without `ConfirmOracle`**: any of buyer/seller/bank authority
+  may call `RefundPayment` after `expires_at` with no cooldown. Buyer
+  reclaims.
+- **Expired but oracle Rejected**: same as the rejected-pre-expiry case;
+  buyer/seller/bank authority can refund without cooldown.
+
+**Why the cooldown matters for sellers**: between FundPayment and
+SubmitDelivery, only the buyer can refund (the seller hasn't bound
+delivery yet). The cooldown gives sellers a guaranteed safe window to do
+off-chain work without the buyer pulling the rug. Setting the cooldown
+to zero would re-open the "fund-then-immediately-refund" attack and is
+why the program forbids it in practice.
+
+**Why no automatic facilitator-side refund**: pr402 deliberately does
+not run an auto-sweep that calls `RefundPayment` on rejection's behalf.
+That would require holding the bank authority key warm in serverless
+infrastructure with too broad a permission set. Buyer self-refund (after
+the cooldown) is the canonical flow; see `pr402/docs/REFUND_SWEEPER.md`
+for the rationale.
 
 **On-chain state change**:
 - `Payment.state` flips to `1` (Released) or `2` (Refunded).

@@ -41,6 +41,7 @@ fn make_job(uid: [u8; 32]) -> EvaluationJob {
         amount: 42,
         mint: Pubkey::new_unique(),
         oracle_authority: Pubkey::new_unique(),
+        oracle_fee_bps: 100,
         expires_at: 1_900_000_000,
         created_at: 0,
         delivery_cutoff_seconds: 0,

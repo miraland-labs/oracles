@@ -171,6 +171,7 @@ pub async fn read_payment(
         amount: payment.amount,
         mint: payment.mint,
         oracle_authority: payment.oracle_authority,
+        oracle_fee_bps: payment.oracle_fee_bps,
         expires_at: payment.expires_at,
         // Wave A §1.1: plumb on-chain timestamps so evaluators can enforce the
         // freshness lower bound (`created_at`) and the deadline-side sanity
@@ -589,6 +590,7 @@ mod tests {
             amount: 0,
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
+            oracle_fee_bps: 100,
             expires_at: 0,
             created_at: 0,
             delivery_cutoff_seconds: 0,
@@ -608,6 +610,7 @@ mod tests {
             amount: 0,
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
+            oracle_fee_bps: 100,
             expires_at: 0,
             created_at: 0,
             delivery_cutoff_seconds: 0,
@@ -634,6 +637,7 @@ mod tests {
             amount: 0,
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
+            oracle_fee_bps: 100,
             expires_at: 0,
             created_at: 0,
             delivery_cutoff_seconds: 0,

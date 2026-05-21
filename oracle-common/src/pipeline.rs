@@ -142,6 +142,7 @@ mod tests {
             amount: 0,
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
+            oracle_fee_bps: 100,
             expires_at: 0,
             created_at: 0,
             delivery_cutoff_seconds: 0,

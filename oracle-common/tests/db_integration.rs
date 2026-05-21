@@ -42,6 +42,7 @@ fn make_job(uid_byte: u8, sla_hash_byte: u8) -> EvaluationJob {
         amount: 1_000_000,
         mint: Pubkey::new_unique(),
         oracle_authority: Pubkey::new_unique(),
+        oracle_fee_bps: 100,
         expires_at: 1_900_000_000,
         created_at: 0,
         delivery_cutoff_seconds: 0,

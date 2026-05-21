@@ -5,6 +5,7 @@ members = [
     "oracle-api-quality",
     "oracle-onchain-transfer",
     "oracle-file-delivery",
+    "oracle-reputation",
 ]
 
 [workspace.package]

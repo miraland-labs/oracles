@@ -228,8 +228,18 @@ You don't do anything else. The flow continues server-side:
    approve / reject.
 5. If approved, the funds release to the seller (via `release_payment`,
    which any party can call).
-6. If rejected, you can call `refund_payment` once the cooldown
-   elapses.
+6. If rejected, **you call `refund_payment` yourself** once the on-chain
+   `Config.refund_cooldown_seconds` elapses since funding. Your wallet/SDK
+   should watch the `Payment.resolution_state` field — when it transitions
+   to `2` (Rejected), schedule the refund tx for time
+   `payment.created_at + Config.refund_cooldown_seconds`.
+
+   **Important: read the cooldown from the chain, don't hard-code it.**
+   The current pr402 deployment uses `86400` (24 hours), but the on-chain
+   admin can update it via `UpdateConfig` to as little as `3600` (1 hour,
+   the program's enforced floor). Always derive the schedule from the
+   live `Config` account so your refund timing stays correct across
+   deployments.
 
 You can monitor the payment's state via the on-chain `Payment` PDA or
 by hitting the oracle's `GET /health` and `GET /stats` (no auth) for a

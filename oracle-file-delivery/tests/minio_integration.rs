@@ -182,6 +182,7 @@ async fn minio_round_trip_5mib_blob() {
             .try_into()
             .expect("32 bytes"),
         oracle_authority: Pubkey::new_unique(),
+        oracle_fee_bps: 100,
         mint: Pubkey::new_unique(),
         amount: 1,
         expires_at: i64::MAX,

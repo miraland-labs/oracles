@@ -42,6 +42,113 @@ pub async fn run_worker(state: Arc<AppState>, mut job_rx: mpsc::Receiver<Evaluat
             h.queue_depth = job_rx.len();
         }
 
+        // ----- operator tip-floor gate -----
+        // OFF by default. Operators opt in via `ORACLE_TIP_FLOOR_ENABLED=true`.
+        // When ON, projected tips below the resolved per-mint floor result in
+        // an eager `ConfirmOracle` REJECT (`resolution_reason = 200`,
+        // `TIP_BELOW_OPERATOR_FLOOR`) instead of a silent skip. The buyer is
+        // refunded immediately rather than waiting for expiry; the rejection
+        // is observable to reputation indexers.
+        //
+        // Cost when ON: one extra `ConfirmOracle` tx per refused job, paid by
+        // the operator. That's the operator's tax for refusing the work, paid
+        // in transparency.
+        if state.config.tip_floor_enabled {
+            match crate::economics::evaluate_tip_floor(
+                job.amount,
+                job.oracle_fee_bps,
+                &job.mint,
+                state.config.min_verdict_tip_default_raw,
+                &state.config.min_verdict_tip_by_mint_raw,
+            ) {
+                crate::economics::TipFloorVerdict::Accept { .. } => {}
+                crate::economics::TipFloorVerdict::Skip {
+                    projected_tip_raw,
+                    floor_raw,
+                } => {
+                    info!(
+                        payment_uid = %uid_hex,
+                        amount = job.amount,
+                        bps = job.oracle_fee_bps,
+                        projected_tip_raw,
+                        floor_raw,
+                        mint = %job.mint,
+                        "tip below operator floor; issuing eager economic REJECT"
+                    );
+
+                    // Defense-in-depth: re-check eligibility on-chain before spending
+                    // SOL on a doomed `ConfirmOracle` tx. Same guard the Active Guardian
+                    // path uses.
+                    let eligible = settler::is_eligible(&state.rpc, &state.config, &job)
+                        .await
+                        .unwrap_or(false);
+
+                    if eligible {
+                        let reason_code = crate::error::economic_reason::TIP_BELOW_OPERATOR_FLOOR;
+                        let result = crate::types::EvaluationResult {
+                            approved: false,
+                            resolution_reason: reason_code,
+                            checks: vec![],
+                        };
+                        let resolution_hash = settler::compute_resolution_hash(
+                            &job,
+                            "x402/oracles/economic-refusal/v1",
+                            &result,
+                            serde_json::json!({
+                                "reason": "tip_below_operator_floor",
+                                "amount": job.amount,
+                                "oracleFeeBps": job.oracle_fee_bps,
+                                "projectedTipRaw": projected_tip_raw,
+                                "floorRaw": floor_raw,
+                                "mint": job.mint.to_string(),
+                            }),
+                        )
+                        .unwrap_or([0u8; 32]);
+
+                        match settler::settle(
+                            &state.rpc,
+                            &state.config,
+                            &job,
+                            false,
+                            reason_code,
+                            resolution_hash,
+                        )
+                        .await
+                        {
+                            Ok(sig) => {
+                                info!("Economic REJECT settled for {uid_hex}: sig={sig}");
+                                if let Some(db) = &state.db {
+                                    let _ = db.record_detected(&job).await;
+                                    let _ = db
+                                        .record_settled(&job, &result, Some(&sig), &resolution_hash)
+                                        .await;
+                                }
+                                let mut h = state.health.write().await;
+                                h.economic_rejects_issued =
+                                    h.economic_rejects_issued.saturating_add(1);
+                                let mut stats = state.stats.write().await;
+                                stats.total_evaluated += 1;
+                                stats.total_rejected += 1;
+                                stats.last_evaluation_at = Some(Utc::now().to_rfc3339());
+                            }
+                            Err(settle_err) => {
+                                warn!(
+                                    "Economic REJECT tx failed for {uid_hex}: {settle_err} \
+                                     (Active Guardian will sweep before expiry)"
+                                );
+                            }
+                        }
+                    } else {
+                        info!(
+                            "Economic REJECT skipped for {uid_hex}: payment no longer eligible \
+                             (already resolved or expired)"
+                        );
+                    }
+                    continue;
+                }
+            }
+        }
+
         // ----- dedup -----
         if let Some(ledger) = &state.db {
             match ledger.is_terminal(&uid).await {

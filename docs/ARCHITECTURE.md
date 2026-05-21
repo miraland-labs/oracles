@@ -199,7 +199,18 @@ and a guardian-specific `resolution_reason`:
 | 101 | EVIDENCE_UNAVAILABLE | Evidence bytes not retrievable after retries |
 | 102 | EVALUATION_TIMEOUT | Pipeline did not complete within safety margin |
 
-After rejection, the buyer can immediately call `RefundPayment`.
+After rejection, the buyer can call `RefundPayment` themselves once
+`Config.refund_cooldown_seconds` has elapsed since funding. The current
+pr402 deployment uses **24 hours**; the on-chain admin may shorten via
+`UpdateConfig` to as little as **1 hour** (the program-enforced floor at
+`MIN_REFUND_COOLDOWN_WHEN_ENABLED_SECONDS`). The cooldown is **policy,
+not promise** — buyer SDKs should read it live from the `Config` PDA.
+
+The seller and bank authority can refund without waiting for the
+cooldown, which is why operators occasionally do mass-recovery via the
+admin path; for steady-state agentic flows the buyer's self-refund is
+the canonical path. See `pr402/docs/REFUND_SWEEPER.md` for why pr402
+does NOT run an auto-sweep on the buyer's behalf.
 
 ### Oracle's stricter cutoff
 

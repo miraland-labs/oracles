@@ -8,6 +8,7 @@
 pub mod chain;
 pub mod config;
 pub mod db;
+pub mod economics;
 pub mod error;
 pub mod evaluator;
 pub mod fetcher;

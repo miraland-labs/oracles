@@ -25,6 +25,12 @@ pub struct EvaluationJob {
     pub amount: u64,
     pub mint: Pubkey,
     pub oracle_authority: Pubkey,
+    /// On-chain `Payment.oracle_fee_bps` snapshotted at funding time. Used by the
+    /// worker's tip-floor gate (`crate::economics`) to skip underpriced jobs before
+    /// pipeline dispatch. The Active Guardian then handles fail-closed REJECT before
+    /// expiry so the buyer is refunded; the seller learns to fund escrows with a
+    /// competitive `oracle_fee_bps`. Bounded by `MAX_ORACLE_FEE_BPS = 500` (5%).
+    pub oracle_fee_bps: u16,
     pub expires_at: i64,
     /// On-chain `Payment.created_at` — the moment the buyer funded the escrow. Used by
     /// evaluators to enforce the freshness lower bound on evidence (no pre-funding
@@ -114,6 +120,10 @@ pub struct RuntimeHealth {
     pub guardian_rejects_issued: u64,
     /// Active Guardian: cumulative retry attempts across all jobs since startup.
     pub guardian_retries_total: u64,
+    /// Operator economics: count of REJECT verdicts issued because the projected
+    /// `oracle_fee_bps × amount` tip fell below the operator's per-mint floor.
+    /// See [`crate::economics`] and [`crate::error::economic_reason`].
+    pub economic_rejects_issued: u64,
 }
 
 /// Minimal SLA envelope the dispatcher reads to determine which `OracleEvaluator` to
@@ -140,6 +150,7 @@ mod tests {
             amount: 1_000_000,
             mint: Pubkey::new_unique(),
             oracle_authority: Pubkey::new_unique(),
+            oracle_fee_bps: 100,
             expires_at: 1_900_000_000,
             created_at: 0,
             delivery_cutoff_seconds: 0,

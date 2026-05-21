@@ -4,7 +4,7 @@
 //! for the canonical list. Every variable below has either a sensible default or a hard
 //! requirement; missing required variables produce a clear `ConfigError` at startup.
 
-use std::{env, str::FromStr, sync::Arc};
+use std::{collections::HashMap, env, str::FromStr, sync::Arc};
 
 use solana_sdk::{
     pubkey::Pubkey,
@@ -140,6 +140,23 @@ pub struct OracleConfig {
     /// protective REJECT if evaluation hasn't completed. Must be strictly larger
     /// than the on-chain `Config.delivery_cutoff_seconds` (default 300s).
     pub guardian_reject_safety_margin_sec: i64,
+
+    // Operator-side tip-floor economics (see `crate::economics`)
+    /// Master switch for the worker's tip-floor gate. **Default `false`** —
+    /// the operator must opt in. When `false`, the worker skips the entire
+    /// economics check and settles every eligible job regardless of
+    /// `oracle_fee_bps` × `amount`. When `true`, the resolution order in
+    /// `crate::economics` applies (per-mint > default > USDC convention).
+    pub tip_floor_enabled: bool,
+    /// Default minimum-tip floor in raw mint units. Applied when `mint` has no
+    /// entry in `min_verdict_tip_by_mint_raw`. `None` falls back to the USDC
+    /// convention ($0.005) for USDC mints, and zero floor for unknown mints.
+    /// Only consulted when `tip_floor_enabled` is `true`.
+    pub min_verdict_tip_default_raw: Option<u64>,
+    /// Per-mint tip-floor overrides in raw mint units. Highest priority — wins
+    /// over `min_verdict_tip_default_raw` and the USDC convention. Only
+    /// consulted when `tip_floor_enabled` is `true`.
+    pub min_verdict_tip_by_mint_raw: HashMap<Pubkey, u64>,
 }
 
 impl OracleConfig {
@@ -258,6 +275,13 @@ impl OracleConfig {
         let backfill_lookback_signatures =
             parse_or("ORACLE_BACKFILL_LOOKBACK_SIGNATURES", 2_000usize)?;
 
+        // Operator tip-floor economics (see `crate::economics`).
+        let tip_floor_enabled = parse_bool("ORACLE_TIP_FLOOR_ENABLED", false)?;
+        let min_verdict_tip_default_raw = env::var("ORACLE_MIN_VERDICT_TIP_DEFAULT_RAW")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        let min_verdict_tip_by_mint_raw = parse_tip_floor_map_env()?;
+
         Ok(Self {
             solana_rpc_url,
             solana_ws_url,
@@ -300,6 +324,9 @@ impl OracleConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(600),
+            tip_floor_enabled,
+            min_verdict_tip_default_raw,
+            min_verdict_tip_by_mint_raw,
         })
     }
 }
@@ -326,6 +353,33 @@ where
         }
         _ => Ok(default),
     }
+}
+
+/// Parse `ORACLE_MIN_VERDICT_TIP_BY_MINT_RAW` (JSON object form).
+///
+/// Format: `{"<mint_base58>": <u64>, ...}`. Empty / unset → empty map.
+/// Bad base58 keys or non-u64 values produce a `ConfigError` so a typo
+/// can't silently disable the floor for a high-value mint.
+fn parse_tip_floor_map_env() -> Result<HashMap<Pubkey, u64>, ConfigError> {
+    const VAR: &str = "ORACLE_MIN_VERDICT_TIP_BY_MINT_RAW";
+    let raw = match env::var(VAR) {
+        Ok(s) if !s.trim().is_empty() => s,
+        _ => return Ok(HashMap::new()),
+    };
+    let parsed: HashMap<String, u64> =
+        serde_json::from_str(raw.trim()).map_err(|e| ConfigError::Invalid {
+            var: VAR.to_string(),
+            message: format!("expected JSON object {{\"<mint>\": <u64>}}: {e}"),
+        })?;
+    let mut out = HashMap::with_capacity(parsed.len());
+    for (k, v) in parsed {
+        let mint = Pubkey::from_str(&k).map_err(|e| ConfigError::Invalid {
+            var: VAR.to_string(),
+            message: format!("bad mint pubkey {k:?}: {e}"),
+        })?;
+        out.insert(mint, v);
+    }
+    Ok(out)
 }
 
 fn parse_bool(var: &str, default: bool) -> Result<bool, ConfigError> {

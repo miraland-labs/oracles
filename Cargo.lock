@@ -3606,6 +3606,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "oracle-reputation"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bs58",
+ "bytemuck",
+ "chrono",
+ "deadpool-postgres",
+ "dotenvy",
+ "futures-util",
+ "hex",
+ "openssl",
+ "postgres-openssl",
+ "serde",
+ "serde_json",
+ "sla-escrow-api",
+ "solana-client",
+ "solana-pubsub-client",
+ "solana-sdk",
+ "solana-transaction-status",
+ "solana-transaction-status-client-types",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
