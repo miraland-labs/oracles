@@ -770,23 +770,18 @@ A single happy-path verdict costs roughly **$0.003–$0.015** to land on-chain.
 Anything below that is a net loss for the operator and signals that the rate
 is too low.
 
-### Tiering convention (recommended defaults)
+### Current default
 
-The pr402 reference Facilitator opens canonical Escrows with a default of
-**100 bps (1%)** for stable-mint payments. This is the recommended starting
-point for any new Facilitator or operator-managed Escrow.
+The pr402 reference Facilitator opens its canonical USDC Escrow with a single
+rate: **100 bps (1%)**. Every payment funded through that Escrow — regardless
+of size — pays the oracle 1% of `amount`. There is no per-payment rate
+selection; the rate is a property of the Escrow, not the payment.
 
-| Escrow size (USDC equivalent) | Suggested `oracle_fee_bps` | Tip on a typical payment |
-|------------------------------|----------------------------|--------------------------|
-| < $5 (micro-payments)         | 200–300 (2–3%)             | $0.02–$0.06              |
-| $5 – $50 (default lane)       | **100 (1%)**               | $0.05–$0.50              |
-| $50 – $500                    | 50 (0.5%)                  | $0.25–$2.50              |
-| > $500 (large escrows)        | 25 (0.25%)                 | $1.25+                   |
-
-50 bps as a single global default is **not** recommended — it does not cover
-priority fees during congestion for sub-$5 payments. Bump to 100 bps as the
-neutral default and reserve 50 bps for high-value lanes where the absolute tip
-is already large.
+At 100 bps:
+- A $5 payment tips the oracle $0.05 — comfortably above the ~$0.003–$0.015
+  per-verdict cost.
+- A $50 payment tips $0.50 — generous.
+- A $0.50 payment tips $0.005 — marginal, but still above the happy-path cost.
 
 ### Operator self-protection
 
