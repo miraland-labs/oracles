@@ -153,6 +153,8 @@ Before declaring the deployment done:
 - [ ] Operator token works: `curl -H "Authorization: Bearer $GOOD"
       .../evaluate` reaches the handler (404 for an unassigned payment
       is correct fail-closed behavior).
+- [ ] `GET /v1/policy` returns your expected `operatorPubkey` and
+      `tipFloorEnabled` setting.
 - [ ] One end-to-end devnet flow: fund an escrow, submit delivery,
       observe `oracle_jobs.status='settled'`. Negative test:
       malformed SLA → `oracle_jobs.status='failed'`.

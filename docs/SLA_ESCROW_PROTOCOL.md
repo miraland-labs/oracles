@@ -507,7 +507,7 @@ Custom reason codes are partitioned per oracle family to avoid overlaps:
 | Buyer authors SLA, never sends to seller | nobody | n/a | No payment was made — nothing to recover. |
 | Seller uploads SLA bytes that differ from buyer's | buyer | After hash returned by registry mismatches local hash. | Buyer aborts before signing FundPayment. |
 | Buyer signs FundPayment, never gets delivery | buyer | After `expires_at` | `RefundPayment` returns escrow to buyer. |
-| Seller submits stale evidence (taken before payment) | oracle | At evaluation; rejected because `evidence.timestamp < Payment.created_at`. | `RefundPayment` after `expires_at` (or anyone calls Refund after Reject). |
+| Seller submits stale evidence (taken before payment) | oracle | At evaluation; rejected because `evidence.timestamp < Payment.created_at`. | Buyer calls `RefundPayment` after `refund_cooldown_seconds` elapses. |
 | Seller reuses one tx for two payments (`onchain-transfer`) | oracle | At evaluation of the second payment; rejected because the `tx_signature` was already settled for a different `payment_uid`. | `RefundPayment` after `expires_at`. |
 | Seller reuses one blob for two payments (`file-delivery`) | oracle | At evaluation of the second payment; rejected because the `delivery_hash` was already settled for a different `payment_uid`. | Same. |
 | Oracle goes offline | buyer | Delivery sits without verdict; `expires_at` passes. | `RefundPayment`. (When the pr402 health gate is enabled, pr402 refuses to bind to oracles that were known-offline at build time, returning HTTP 503.) |
@@ -584,7 +584,7 @@ Phase   Buyer                       Seller                 Oracle             Ch
                                                                               event emitted
   8     observe event              observe event
         if approved → ReleasePayment (anyone may call) ──────────────────▶ tokens → seller
-        if rejected → RefundPayment (anyone may call) ───────────────────▶ tokens → buyer
+        if rejected → RefundPayment (buyer/seller/admin) ──────────────────▶ tokens → buyer
         if expired without verdict → RefundPayment ─────────────────────▶ tokens → buyer
 ```
 
