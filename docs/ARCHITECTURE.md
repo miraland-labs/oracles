@@ -332,8 +332,8 @@ The 5-min gap between oracle margin and on-chain cutoff absorbs:
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐    │
 │  │ nginx (TLS termination)                         │    │
-│  │   oracle-devnet.159-138-5-240.nip.io → :4021   │    │
-│  │   oracle-mainnet.159-138-5-240.nip.io → :4031  │    │
+│  │   oracle.innoloyalty.com/devnet/  → :4021      │    │
+│  │   oracle.innoloyalty.com/mainnet/ → :4031      │    │
 │  └─────────────────────────────────────────────────┘    │
 │                                                         │
 └─────────────────────────────────────────────────────────┘

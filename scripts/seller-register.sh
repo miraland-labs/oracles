@@ -14,7 +14,14 @@
 # Save the printed bearer; the oracle stores only SHA256(token) and never
 # returns it again. If you lose it, run /v1/registry/seller/rotate.
 #
-# Dependencies: bash, curl, jq, solana CLI (>=1.18 / 2.x).
+# Dependencies: bash, curl, jq, python3 + pynacl + base58.
+#
+# We deliberately do NOT use `solana sign-offchain-message`: the Solana CLI
+# wraps the message in the SIMD-0048 offchain envelope before signing, which
+# the oracle's seller/register handler does not verify against. The oracle
+# checks the signature over the raw challenge bytes; only a direct ed25519
+# sign produces the right shape. Hence the Python path is the canonical
+# implementation.
 
 set -euo pipefail
 
@@ -26,8 +33,12 @@ if ! command -v jq >/dev/null 2>&1; then
     echo "missing dependency: jq" >&2
     exit 64
 fi
-if ! command -v solana >/dev/null 2>&1; then
-    echo "missing dependency: solana CLI" >&2
+if ! command -v solana-keygen >/dev/null 2>&1; then
+    echo "missing dependency: solana-keygen (used to derive the wallet pubkey)" >&2
+    exit 64
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "missing dependency: python3 (used to sign the challenge with raw ed25519)" >&2
     exit 64
 fi
 if [[ ! -f "${KEYPAIR}" ]]; then
@@ -46,42 +57,32 @@ if [[ -z "${CHALLENGE}" || "${CHALLENGE}" == "null" ]]; then
     exit 1
 fi
 
-# 2. Sign the challenge bytes with the seller keypair.
+# 2. Sign the raw challenge bytes with ed25519.
 #
-# `solana sign-offchain-message` needs a --wallet-only signer (this keypair).
-# Older CLIs lack the --raw flag; we fall back to a Python helper if needed.
-SIGNATURE=""
-if solana sign-offchain-message --help 2>/dev/null | grep -q -- '--keypair'; then
-    SIGNATURE="$(solana sign-offchain-message \
-        --keypair "${KEYPAIR}" \
-        "${CHALLENGE}" 2>/dev/null || true)"
-fi
+# The oracle verifies the signature over the raw challenge string (no
+# envelope, no framing). `solana sign-offchain-message` would NOT work here
+# because it signs the SIMD-0048 envelope. We use python3 + pynacl which
+# performs a direct ed25519 sign over the challenge bytes.
+SIGNATURE="$(KEYPAIR_PATH="${KEYPAIR}" CHALLENGE="${CHALLENGE}" python3 - <<'PYEOF'
+import json
+import os
+import sys
 
-if [[ -z "${SIGNATURE}" ]]; then
-    # Fallback: use Python + nacl. We try to keep this rare so seller users
-    # only need the Solana CLI.
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo "could not sign with solana CLI and python3 not available; install" >&2
-        echo "a recent solana CLI (>=1.18) or python3 with pynacl + base58" >&2
-        exit 1
-    fi
-    SIGNATURE="$(python3 - <<PYEOF
-import base58, json, sys
 try:
+    import base58
     import nacl.signing
-except Exception as e:
-    print(f"missing pynacl ({e}); pip install pynacl base58", file=sys.stderr)
+except ImportError as e:
+    print(f"missing python dependency ({e}); install with: pip3 install pynacl base58", file=sys.stderr)
     sys.exit(1)
 
-with open("${KEYPAIR}") as f:
+with open(os.environ["KEYPAIR_PATH"]) as f:
     raw = json.load(f)
 secret = bytes(raw)[:32]
 sk = nacl.signing.SigningKey(secret)
-sig = sk.sign(b"${CHALLENGE}").signature
+sig = sk.sign(os.environ["CHALLENGE"].encode("ascii")).signature
 print(base58.b58encode(sig).decode("ascii"))
 PYEOF
-    )"
-fi
+)"
 
 if [[ -z "${SIGNATURE}" ]]; then
     echo "failed to sign challenge" >&2

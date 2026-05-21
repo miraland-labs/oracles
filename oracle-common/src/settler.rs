@@ -184,27 +184,58 @@ pub async fn settle(
     resolution_reason: u16,
     resolution_hash: [u8; 32],
 ) -> Result<String, OracleError> {
-    use sla_escrow_api::sdk::EscrowSdk;
+    use sla_escrow_api::{
+        consts::{BANK, CONFIG, ESCROW, PAYMENT},
+        instruction::ConfirmOracle,
+    };
+    use solana_sdk::instruction::{AccountMeta, Instruction};
 
     let resolution_state: u8 = if approved { 1 } else { 2 };
     let payment_uid_hex = hex::encode(job.payment_uid);
 
-    // The `_from_uid_bytes` SDK variant derives the payment PDA from the
-    // raw 32 bytes of the on-chain `Payment.payment_uid`, NOT from a
-    // string. Routing the legacy `confirm_oracle(uid_str, ...)` helper
-    // would re-encode the hex *string* via `normalize_payment_uid`
-    // (zero-padding the first 32 ASCII bytes into the seed), producing
-    // a different PDA than the one the buyer's FundPayment created.
-    // The bytes variant skips that step entirely.
-    let ix = EscrowSdk::confirm_oracle_from_uid_bytes(
-        config.oracle_pubkey(),
-        job.mint,
-        &job.payment_uid,
-        job.delivery_hash,
-        resolution_hash,
-        resolution_state,
-        resolution_reason,
+    // Build the ConfirmOracle instruction directly so it honors the runtime
+    // `escrow_program_id` (devnet vs. mainnet). The bundled SDK
+    // (`EscrowSdk::confirm_oracle_from_uid_bytes`) hardcodes
+    // `sla_escrow_api::ID`, which is the mainnet program id under the
+    // current 0.3.x crate. On a devnet deployment that produces PDAs the
+    // chain doesn't recognize and submission fails with
+    // "Attempt to load a program that does not exist". Inline the same
+    // PDA derivation pattern pr402 uses on its side.
+    //
+    // The discriminator byte is included by `ConfirmOracle::to_bytes()`
+    // automatically (Steel's `instruction!` macro generates it).
+    let program_id = config.escrow_program_id;
+    let (bank_pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(&[BANK], &program_id);
+    let (config_pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(&[CONFIG], &program_id);
+    let (escrow_pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
+        &[ESCROW, job.mint.as_ref(), bank_pda.as_ref()],
+        &program_id,
     );
+    let (payment_pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(
+        &[PAYMENT, &job.payment_uid, bank_pda.as_ref()],
+        &program_id,
+    );
+
+    let data = ConfirmOracle {
+        delivery_hash: job.delivery_hash,
+        resolution_hash,
+        resolution_reason: resolution_reason.to_le_bytes(),
+        resolution_state,
+        _padding: [0; 5],
+    }
+    .to_bytes();
+
+    let ix = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(config.oracle_pubkey(), true), // oracle signs
+            AccountMeta::new_readonly(bank_pda, false),
+            AccountMeta::new_readonly(config_pda, false),
+            AccountMeta::new_readonly(escrow_pda, false),
+            AccountMeta::new(payment_pda, false), // writable
+        ],
+        data,
+    };
 
     // Diagnostic: log every account meta the SDK produced so a
     // settlement failure is immediately traceable to a specific PDA
