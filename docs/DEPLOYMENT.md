@@ -74,22 +74,114 @@ hardening.
 
 Each subsection below is independent. Enable the ones you need.
 
-### 2.1 Bind to localhost, front with TLS
+### 2.1 TLS via the bundled nginx-setup helper
 
-Set `BIND_ADDR=127.0.0.1:4020` in the env file and put a reverse proxy
-in front. nginx, Caddy, or any HTTPS frontend works; the only oracle
-constraints are:
+`oracles/scripts/docker/oracle-nginx-setup.sh` wraps install-nginx + write-vhost +
+issue-Let's-Encrypt-cert + flip-oracle-to-loopback into one idempotent
+command. Four modes — pick whichever matches your DNS situation.
 
-- Stream the registration POSTs (no buffering): `proxy_request_buffering
-  off`, `client_max_body_size` at least
-  `ORACLE_REGISTRY_MAX_BLOB_BYTES`.
+#### Mode 1: Single host, path-based (one DNS A record, ONE cert)
+
+Best when you have one subdomain pointing at the oracle host. Routes
+`/devnet/*` and `/mainnet/*` on the same hostname:
+
+```bash
+# Prereq: oracle.example.com → host's public IP
+sudo ./oracles/scripts/docker/oracle-nginx-setup.sh \
+    --single-host oracle.example.com \
+    --email you@example.com \
+    --flip-loopback
+```
+
+Endpoints after this completes:
+
+```
+https://oracle.example.com/devnet/v1/registry/info
+https://oracle.example.com/devnet/v1/policy
+https://oracle.example.com/devnet/health
+https://oracle.example.com/mainnet/...   (same shape)
+```
+
+#### Mode 2: Two hosts (devnet + mainnet on separate subdomains)
+
+Best when you want clean separation per cluster. Issues two certs in one
+certbot call:
+
+```bash
+# Prereqs: both A records → host's public IP
+sudo ./oracles/scripts/docker/oracle-nginx-setup.sh \
+    --devnet-host  oracle-devnet.example.com \
+    --mainnet-host oracle-mainnet.example.com \
+    --email you@example.com \
+    --flip-loopback
+```
+
+#### Mode 3: Wildcard DNS (no DNS setup needed)
+
+Useful for quick devnet/staging deployments where you don't want to
+register a domain. Encodes your IP into the hostname via `nip.io` or
+`sslip.io`:
+
+```bash
+# Auto-detects public IP (override with --public-ip when host is NAT'd)
+sudo ./oracles/scripts/docker/oracle-nginx-setup.sh \
+    --nip \
+    --email you@example.com \
+    --flip-loopback
+```
+
+The script computes hostnames like `oracle-devnet.159-138-5-240.nip.io`
+and `oracle-mainnet.159-138-5-240.nip.io`.
+
+#### Mode 4: IP-only, no TLS (HTTP only, ports 80)
+
+Last resort for environments without DNS or for quick local testing:
+
+```bash
+sudo ./oracles/scripts/docker/oracle-nginx-setup.sh --ip-only --flip-loopback
+```
+
+Exposes `http://<ip>/devnet/...` and `http://<ip>/mainnet/...`. Don't
+use this for mainnet — buyers won't trust unencrypted endpoints.
+
+#### What the helper does in all modes
+
+1. Installs nginx (and certbot in TLS modes).
+2. Opens 80/443 in ufw.
+3. Writes `/etc/nginx/sites-available/oracle-onchain-transfer` and enables it.
+4. (TLS modes) Runs `certbot --nginx` to issue the cert + add the TLS
+   server block + install the http→https redirect. Auto-renewal runs via
+   the stock `certbot.timer` Ubuntu installs.
+5. (`--flip-loopback`) Edits `/etc/oracle/onchain-transfer-{devnet,mainnet}.env`
+   so `BIND_ADDR=127.0.0.1:<port>`, restarts the oracle units, and
+   removes public ufw rules for the backend ports. After this, only nginx
+   reaches the oracle.
+6. Curls each endpoint and prints the HTTP code so you see green
+   immediately.
+
+The script is idempotent — safe to re-run if anything fails partway through.
+
+#### Auto-renewal verification
+
+After the first run, confirm certbot's renewal timer is active:
+
+```bash
+sudo systemctl status certbot.timer
+sudo certbot certificates       # shows expiry dates
+sudo certbot renew --dry-run    # confirms renewal would succeed
+```
+
+#### Manual nginx (alternative to the helper)
+
+If you want full control, the helper writes a vhost you can copy from
+[`scripts/examples/oracle-nginx.conf`](../scripts/examples/oracle-nginx.conf).
+Required headers in any custom config:
+
+- `proxy_request_buffering off`, `client_max_body_size` ≥ `ORACLE_REGISTRY_MAX_BLOB_BYTES`
+  (so streaming uploads pass through unbuffered).
 - Restrict `/metrics` and `/evaluate` to your operator network.
-- `/health` and `/v1/registry/...` may be public (the registry is
-  bearer-gated by the oracle).
-
-A reference nginx site is in
-[`scripts/examples/oracle-nginx.conf`](../scripts/examples/oracle-nginx.conf)
-(if you want a starting point).
+- `/health`, `/v1/policy`, and `/v1/registry/...` may be public — the
+  registry is bearer-gated by the oracle.
 
 ### 2.2 Postgres for production
 

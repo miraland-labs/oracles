@@ -4,9 +4,9 @@
 # the two oracle-onchain-transfer instances, optionally issue Let's Encrypt
 # certs, and flip the oracle env files back to loopback (Posture B).
 #
-# Three modes:
+# Four modes:
 #
-#  1) Domain mode (recommended for production):
+#  1) Domain mode — two hostnames (recommended for clean separation):
 #       sudo ./oracle-nginx-setup.sh \
 #         --devnet-host  oracle-devnet.example.com \
 #         --mainnet-host oracle-mainnet.example.com \
@@ -14,14 +14,24 @@
 #         --flip-loopback
 #     Requires real A records pointing to this host.
 #
-#  2) Wildcard-DNS mode (no DNS needed, IP is encoded in the hostname):
+#  2) Single-host mode — one hostname, path-based, with TLS:
+#       sudo ./oracle-nginx-setup.sh \
+#         --single-host oracle.example.com \
+#         --email you@example.com \
+#         --flip-loopback
+#     Requires one A record pointing to this host. Issues ONE Let's Encrypt
+#     cert covering the single hostname. Routes:
+#       https://oracle.example.com/devnet/...  -> 127.0.0.1:DEVNET_PORT
+#       https://oracle.example.com/mainnet/... -> 127.0.0.1:MAINNET_PORT
+#
+#  3) Wildcard-DNS mode (no DNS needed, IP encoded in the hostname):
 #       sudo ./oracle-nginx-setup.sh --nip --email you@example.com --flip-loopback
 #     Defaults to nip.io. Use --sslip for sslip.io. Use --public-ip <ip> to
 #     override IP detection when the host is behind NAT (Huawei Cloud, etc).
 #     Issues TLS for oracle-devnet.<ip-with-dashes>.<wildcard> and
 #                    oracle-mainnet.<ip-with-dashes>.<wildcard>.
 #
-#  3) IP-only mode (no DNS, no TLS, path-based routing on port 80):
+#  4) IP-only mode (no DNS, no TLS, path-based routing on port 80):
 #       sudo ./oracle-nginx-setup.sh --ip-only --flip-loopback
 #     Exposes:
 #       http://<ip>/devnet/...   -> 127.0.0.1:DEVNET_PORT
@@ -30,7 +40,7 @@
 # Common flags:
 #   --devnet-port  4021   (default)
 #   --mainnet-port 4031   (default)
-#   --no-tls              (skip certbot in domain/sslip mode, plain http)
+#   --no-tls              (skip certbot in domain/single-host/sslip modes, plain http)
 #   --flip-loopback       (rewrite /etc/oracle/*.env BIND_ADDR to 127.0.0.1
 #                          and remove public ufw rules for those ports)
 #
@@ -39,6 +49,7 @@ set -euo pipefail
 
 DEVNET_HOST=""
 MAINNET_HOST=""
+SINGLE_HOST=""
 EMAIL=""
 DEVNET_PORT=4021
 MAINNET_PORT=4031
@@ -55,6 +66,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --devnet-host)   DEVNET_HOST="$2"; shift 2 ;;
     --mainnet-host)  MAINNET_HOST="$2"; shift 2 ;;
+    --single-host)   SINGLE_HOST="$2"; shift 2 ;;
     --email)         EMAIL="$2"; shift 2 ;;
     --devnet-port)   DEVNET_PORT="$2"; shift 2 ;;
     --mainnet-port)  MAINNET_PORT="$2"; shift 2 ;;
@@ -65,7 +77,7 @@ while [[ $# -gt 0 ]]; do
     --public-ip)     PUBLIC_IP="$2"; shift 2 ;;
     --ip-only)       IP_ONLY=1; DO_TLS=0; shift ;;
     -h|--help)
-      sed -n '2,40p' "$0"; exit 0 ;;
+      sed -n '2,52p' "$0"; exit 0 ;;
     *) die "unknown arg: $1" ;;
   esac
 done
@@ -87,6 +99,14 @@ detect_ip() {
     | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
 }
 
+# Validate exclusive mode flags upfront — exactly one mode must be active.
+MODES_SET=0
+[[ -n "$SINGLE_HOST"   ]] && MODES_SET=$((MODES_SET+1))
+[[ -n "$WILDCARD_MODE" ]] && MODES_SET=$((MODES_SET+1))
+[[ $IP_ONLY -eq 1      ]] && MODES_SET=$((MODES_SET+1))
+[[ -n "$DEVNET_HOST$MAINNET_HOST" && -z "$SINGLE_HOST" && -z "$WILDCARD_MODE" && $IP_ONLY -eq 0 ]] && MODES_SET=$((MODES_SET+1))
+[[ $MODES_SET -le 1 ]] || die "modes are exclusive: pick one of --single-host / --devnet-host+--mainnet-host / --nip|--sslip / --ip-only"
+
 if [[ -n "$WILDCARD_MODE" ]]; then
   IP=$(detect_ip)
   [[ -n "$IP" ]] || die "could not detect host public IP; pass --public-ip <ip>"
@@ -100,10 +120,12 @@ if [[ -n "$WILDCARD_MODE" ]]; then
 fi
 
 if [[ $IP_ONLY -eq 1 ]]; then
-  [[ -z "$DEVNET_HOST$MAINNET_HOST" ]] || die "--ip-only is exclusive with --devnet-host/--mainnet-host"
+  :  # no host args expected
+elif [[ -n "$SINGLE_HOST" ]]; then
+  log "single-host mode: $SINGLE_HOST (paths /devnet/ and /mainnet/)"
 else
-  [[ -n "$DEVNET_HOST"  ]] || die "--devnet-host is required (or use --nip / --sslip / --ip-only)"
-  [[ -n "$MAINNET_HOST" ]] || die "--mainnet-host is required (or use --nip / --sslip / --ip-only)"
+  [[ -n "$DEVNET_HOST"  ]] || die "--devnet-host is required (or use --single-host / --nip / --sslip / --ip-only)"
+  [[ -n "$MAINNET_HOST" ]] || die "--mainnet-host is required (or use --single-host / --nip / --sslip / --ip-only)"
 fi
 
 if [[ $DO_TLS -eq 1 && -z "$EMAIL" ]]; then
@@ -171,6 +193,50 @@ server {
     }
 }
 EOF
+elif [[ -n "$SINGLE_HOST" ]]; then
+  cat >"$VHOST" <<EOF
+# Managed by oracle-nginx-setup.sh — single-host, path-based reverse proxy
+# Host: $SINGLE_HOST
+#   /devnet/*  -> 127.0.0.1:$DEVNET_PORT
+#   /mainnet/* -> 127.0.0.1:$MAINNET_PORT
+# certbot --nginx will add the TLS server block + http→https redirect after
+# the initial port-80 vhost passes the ACME http-01 challenge.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $SINGLE_HOST;
+
+    client_max_body_size 32m;
+    proxy_read_timeout 30s;
+    proxy_send_timeout 30s;
+
+    location /devnet/ {
+        rewrite ^/devnet/(.*)\$ /\$1 break;
+        proxy_pass         http://127.0.0.1:$DEVNET_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+    }
+
+    location /mainnet/ {
+        rewrite ^/mainnet/(.*)\$ /\$1 break;
+        proxy_pass         http://127.0.0.1:$MAINNET_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+    }
+
+    location = / {
+        return 200 "oracle-onchain-transfer reverse proxy at $SINGLE_HOST\nuse /devnet/... or /mainnet/...\n";
+        default_type text/plain;
+    }
+}
+EOF
 else
   cat >"$VHOST" <<EOF
 # Managed by oracle-nginx-setup.sh — reverse proxy for oracle-onchain-transfer
@@ -229,10 +295,17 @@ log "nginx reloaded"
 
 # 4. issue TLS --------------------------------------------------------------
 if [[ $DO_TLS -eq 1 ]]; then
-  log "running certbot for $DEVNET_HOST and $MAINNET_HOST"
-  certbot --nginx --non-interactive --agree-tos --redirect \
-    --email "$EMAIL" \
-    -d "$DEVNET_HOST" -d "$MAINNET_HOST"
+  if [[ -n "$SINGLE_HOST" ]]; then
+    log "running certbot for $SINGLE_HOST"
+    certbot --nginx --non-interactive --agree-tos --redirect \
+      --email "$EMAIL" \
+      -d "$SINGLE_HOST"
+  else
+    log "running certbot for $DEVNET_HOST and $MAINNET_HOST"
+    certbot --nginx --non-interactive --agree-tos --redirect \
+      --email "$EMAIL" \
+      -d "$DEVNET_HOST" -d "$MAINNET_HOST"
+  fi
   systemctl reload nginx
 fi
 
@@ -268,6 +341,12 @@ if [[ $IP_ONLY -eq 1 ]]; then
   IP=$(detect_ip)
   for prefix in devnet mainnet; do
     url="http://$IP/$prefix/v1/registry/info"
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$url" || echo 000)
+    echo "  $url -> HTTP $code"
+  done
+elif [[ -n "$SINGLE_HOST" ]]; then
+  for prefix in devnet mainnet; do
+    url="$SCHEME://$SINGLE_HOST/$prefix/v1/registry/info"
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$url" || echo 000)
     echo "  $url -> HTTP $code"
   done
