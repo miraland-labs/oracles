@@ -54,6 +54,12 @@ sudo ./scripts/install.sh \
 # 4. Edit /etc/oracle/api-quality.env. Minimum: SOLANA_RPC_URL,
 #    SOLANA_WS_URL, ORACLE_KEYPAIR_PATH, ESCROW_PROGRAM_ID, DATABASE_URL,
 #    EVIDENCE_REGISTRY_URL, ORACLE_OPERATOR_TOKEN_SHA256.
+#
+#    ESCROW_PROGRAM_ID is REQUIRED on devnet. The binary's compiled-in
+#    default is the MAINNET sla-escrow program id; if you leave the var
+#    unset on a devnet host, settlement transactions will fail with
+#    "Attempt to load a program that does not exist" because that pubkey
+#    has no program deployed on devnet. See §2.6 for the canonical IDs.
 sudo -u oracle vi /etc/oracle/api-quality.env
 
 # 5. Restart and confirm.
@@ -232,6 +238,76 @@ The only differences are `SOLANA_RPC_URL` / `SOLANA_WS_URL`,
 keypair funding (real SOL vs airdrop). For
 `oracle-onchain-transfer` also set `TRANSFER_CLUSTER=mainnet`.
 
+#### Canonical sla-escrow program IDs
+
+| Cluster | Program ID | Source |
+| --- | --- | --- |
+| Mainnet | `SEscZ6n23pVak34xipBKoGCikHUj3w6XPNyty4rHprJ` | `sla-escrow/api/src/lib.rs` `declare_id!` (compiled-in default) |
+| Devnet  | `s5zkKiy8FD9nFdAhQZoHHV3G8s4QCPzE4cR9U4Hr4ZH` | `oracles/scripts/docker/onchain-transfer-devnet.env.example` |
+
+The crate's `declare_id!` is the **mainnet** id. The oracle binary
+inherits that default when `ESCROW_PROGRAM_ID` is unset. That means a
+devnet host that forgot to set the env var will:
+
+1. Subscribe to logs against the mainnet pubkey (no events ever fire).
+2. When a delivery is somehow injected, build and submit a
+   `ConfirmOracle` instruction targeting the mainnet pubkey on a devnet
+   RPC. The RPC rejects with `Attempt to load a program that does not
+   exist` and the worker logs `Settlement failed: send_and_confirm:
+   Attempt to load a program that does not exist`.
+
+The error is silent until a delivery arrives because chain monitoring
+just watches an empty stream. Always cross-check `ESCROW_PROGRAM_ID`
+against the cluster the RPC URLs point at before declaring the
+deployment healthy.
+
+#### Pre-flight verification
+
+Run on the deployment host before declaring success:
+
+```bash
+# Pull program_id straight from /v1/policy and compare against the
+# cluster's canonical id.
+PROFILE_PROGRAM=$(curl -fsS http://127.0.0.1:4021/v1/policy | jq -r .programId)
+
+# Devnet expectation:
+test "$PROFILE_PROGRAM" = "s5zkKiy8FD9nFdAhQZoHHV3G8s4QCPzE4cR9U4Hr4ZH" \
+  && echo "OK: devnet program id matches" \
+  || echo "MISMATCH: $PROFILE_PROGRAM"
+
+# Confirm the program exists on the cluster the oracle is pointed at.
+solana program show "$PROFILE_PROGRAM" --url devnet
+```
+
+`solana program show` returns `Error: AccountNotFound` when the program
+is not deployed on that cluster. If you see that against the configured
+RPC, the oracle will fail every settlement with `Attempt to load a
+program that does not exist` — fix `ESCROW_PROGRAM_ID` and restart
+before any traffic arrives.
+
+For mainnet, replace the expected pubkey with
+`SEscZ6n23pVak34xipBKoGCikHUj3w6XPNyty4rHprJ` and `--url mainnet-beta`.
+
+#### Cluster pinning checklist
+
+Per family, before flipping to live traffic:
+
+- [ ] `ESCROW_PROGRAM_ID` is set explicitly in
+      `/etc/oracle/<family>.env` (devnet) or `*-mainnet.env` (mainnet).
+      Never rely on the compiled-in default outside mainnet.
+- [ ] `SOLANA_RPC_URL` and `SOLANA_WS_URL` point at the **same** cluster
+      as `ESCROW_PROGRAM_ID`. Mismatched cluster = silent monitor +
+      `program does not exist` on settle.
+- [ ] For `oracle-onchain-transfer`, `TRANSFER_CLUSTER` matches both of
+      the above. The evaluator rejects evidence whose tx-cluster doesn't
+      match this var.
+- [ ] `solana program show $ESCROW_PROGRAM_ID --url <cluster>` returns
+      a populated account (not `AccountNotFound`).
+- [ ] `/v1/policy` returns the expected `programId` after restart.
+- [ ] One end-to-end settlement on this cluster reaches
+      `oracle_jobs.status='settled'`. The "settled-once" gate is the
+      only proof that monitor + settler agree on the cluster.
+
 ---
 
 ## 3. Bring-up checklist
@@ -242,6 +318,12 @@ Before declaring the deployment done:
 - [ ] `/health` → `"status":"healthy"` with `chain_connected=true`,
       `websocket_connected=true`.
 - [ ] `oracle_balance_lamports` ≥ 1 SOL on mainnet (≥ 0.1 SOL on devnet).
+- [ ] `/v1/policy` `programId` matches the cluster's canonical
+      `ESCROW_PROGRAM_ID` from §2.6 AND `solana program show
+      $ESCROW_PROGRAM_ID --url <cluster>` returns a populated account.
+      The compiled-in default is mainnet; an unset env var on a devnet
+      host fails settlement with "Attempt to load a program that does
+      not exist."
 - [ ] Operator token works: `curl -H "Authorization: Bearer $GOOD"
       .../evaluate` reaches the handler (404 for an unassigned payment
       is correct fail-closed behavior).
@@ -332,6 +414,17 @@ If `/health` returns 503 after start, tail
   or DB unreachable.
 - `keypair not found` → `ORACLE_KEYPAIR_PATH` wrong or file unreadable
   to `oracle:oracle`.
+
+If `/health` is green but settlements always fail with
+`Settlement failed: send_and_confirm: Attempt to load a program that
+does not exist`, the oracle is pointed at a cluster where
+`ESCROW_PROGRAM_ID` is not deployed. The compiled-in default is the
+mainnet program id; a devnet deployment that left `ESCROW_PROGRAM_ID`
+unset hits this immediately on the first ConfirmOracle attempt.
+Cross-check `/v1/policy` `programId` against the canonical IDs in
+§2.6, run `solana program show $ESCROW_PROGRAM_ID --url <cluster>` to
+confirm deployment, then fix the env file and `systemctl restart` the
+unit.
 
 If settlements never happen but `deliveries_observed` increments, the
 chain monitor saw the event but couldn't fetch SLA bytes. Verify

@@ -261,9 +261,20 @@ async fn post_delivery(
             format!("body exceeds max_bytea_bytes ({})", state.max_bytea_bytes),
         );
     }
-    let sniffed_profile = serde_json::from_slice::<ProfileIdSniffer>(&body)
-        .ok()
-        .and_then(|s| s.profile_id);
+    // Delivery uploads MUST be valid JSON. Non-JSON binary content has a
+    // designated home at `POST /v1/registry/blob`. `profile_id` itself is
+    // OPTIONAL on this endpoint (some profiles, e.g. `file-delivery`, do
+    // not carry it on the delivery side); we sniff it for catalog tagging
+    // when present.
+    let sniffed_profile = match serde_json::from_slice::<ProfileIdSniffer>(&body) {
+        Ok(s) => s.profile_id,
+        Err(e) => {
+            return err_response(
+                StatusCode::BAD_REQUEST,
+                format!("body is not valid JSON: {e}"),
+            );
+        }
+    };
     upload_payload(
         &state,
         body,

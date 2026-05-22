@@ -193,17 +193,19 @@ pub async fn settle(
     let resolution_state: u8 = if approved { 1 } else { 2 };
     let payment_uid_hex = hex::encode(job.payment_uid);
 
-    // Build the ConfirmOracle instruction directly so it honors the runtime
-    // `escrow_program_id` (devnet vs. mainnet). The bundled SDK
-    // (`EscrowSdk::confirm_oracle_from_uid_bytes`) hardcodes
-    // `sla_escrow_api::ID`, which is the mainnet program id under the
-    // current 0.3.x crate. On a devnet deployment that produces PDAs the
-    // chain doesn't recognize and submission fails with
-    // "Attempt to load a program that does not exist". Inline the same
-    // PDA derivation pattern pr402 uses on its side.
+    // Build the ConfirmOracle instruction directly against the runtime
+    // `escrow_program_id` (devnet vs. mainnet). Implements
+    // `x402/sla-escrow-onchain-abi/v1` §5.8 and §2.1 (PDA seeds). The
+    // bundled `sla-escrow-api` SDK hardcodes its compile-time
+    // `declare_id!`, which forces a per-cluster crate version (0.4.x for
+    // mainnet, 0.2.x for devnet); a single oracle binary that supports
+    // both clusters at runtime cannot use the SDK directly. Hand-rolling
+    // the instruction against the ABI spec is the documented bypass for
+    // multi-cluster consumers — see
+    // `oracles/spec/sla-escrow-onchain-abi/v1/NORMATIVE.md`.
     //
     // The discriminator byte is included by `ConfirmOracle::to_bytes()`
-    // automatically (Steel's `instruction!` macro generates it).
+    // automatically (steel's `instruction!` macro generates it).
     let program_id = config.escrow_program_id;
     let (bank_pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(&[BANK], &program_id);
     let (config_pda, _) = solana_sdk::pubkey::Pubkey::find_program_address(&[CONFIG], &program_id);

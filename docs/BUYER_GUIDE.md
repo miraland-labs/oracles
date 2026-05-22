@@ -1,159 +1,112 @@
 # Buyer Integration Guide
 
 You're a buyer. A seller is asking you to pay for something via
-`sla-escrow`, and the seller's HTTP-402 challenge mentions an **oracle**.
-This guide tells you, in plain language, how to pick the right oracle and
-fund the escrow.
+`sla-escrow`, and the seller's HTTP-402 challenge mentions an oracle.
+This guide tells you how to pick the right oracle and fund the escrow.
 
-> **30-second summary.** When a seller advertises `scheme:
-> "v2:solana:sla-escrow"`, they list one or more oracles in
-> `accepts[].extra.oracleProfiles[]`. You **pick** one of those oracles
-> (or accept the seller's default), pass its `operatorPubkey` as
-> `oracle_authority` when funding the escrow, and the chosen oracle
-> decides the verdict. That's it.
->
-> One nuance for trust: **you author the SLA bytes**, not the seller.
-> Bake `payment_uid` and (recommended) `buyer_nonce` into the SLA JSON
-> before hashing, so each FundPayment is tied to exactly one SLA. The
-> seller fetches your bytes back from the oracle's content-addressed
-> registry and echoes both fields in evidence; the oracle compares.
-> §3 walks through the exact shape.
+> **Normative reference.** Buyer obligations are specified in
+> [`spec/sla-escrow-protocol/v1`](../spec/sla-escrow-protocol/v1/NORMATIVE.md)
+> §3. SLA envelope rules in
+> [`spec/sla-document/v1`](../spec/sla-document/v1/NORMATIVE.md). Wire-level
+> registry calls in
+> [`spec/registry-http-api/v1`](../spec/registry-http-api/v1/NORMATIVE.md).
+> The on-chain `FundPayment` (and optional `RefundPayment` /
+> `ReleasePayment`) instruction bytes are specified in
+> [`spec/sla-escrow-onchain-abi/v1`](../spec/sla-escrow-onchain-abi/v1/NORMATIVE.md) —
+> useful when integrating from a non-Rust language. This guide gives
+> recipes that follow those specs.
 
-If you've used `pr402` for the `exact` rail, you already know the
-mechanics. SLA-escrow adds **two extra fields** to the build call:
-`slaHash` and `oracleAuthority`.
+## 30-second summary
 
-> **First time integrating?** Read [`SLA_ESCROW_PROTOCOL.md`](./SLA_ESCROW_PROTOCOL.md)
-> for the four-actor flow (buyer / seller / oracle / pr402). This guide
-> gives you the buyer's recipes; the protocol doc gives you the big picture.
+When a seller advertises `scheme: "v2:solana:sla-escrow"`, they list
+oracles in `accepts[].extra.oracleProfiles[]`. You pick one (or accept
+the seller's default) and pass its `operatorPubkey` as
+`oracle_authority` when funding. The chosen oracle decides the verdict.
 
----
+## Two authoring patterns
 
-## 1. The 402 challenge — what to look for
+You'll do one of these (per spec §3.1):
 
-When you fetch a paywalled resource and get HTTP 402, the body looks
-like:
+**Direct authoring.** You construct the SLA JSON locally, hash it,
+transmit the bytes to the seller. Use this when your tooling can build
+profile-conforming SLAs.
+
+**Delegated authoring (HTTP 402).** You send intent-bearing parameters
+to the seller, receive a 402 with `accepts[].extra.slaHash` already
+computed by the seller, sign `FundPayment` with that hash. Use this for
+x402-paid HTTP services where your client doesn't assemble per-profile
+JSON.
+
+Both patterns are equally safe on the funds dimension. Correctness comes
+from the on-chain commit binding funds to a specific hash, regardless
+of who computed it (spec §3.5).
+
+## 1. The 402 challenge
 
 ```json
 {
   "x402Version": 2,
-  "accepts": [
-    {
-      "scheme": "v2:solana:sla-escrow",
-      "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-      "maxAmountRequired": "1000000",
-      "payTo": "<seller-or-escrow-pda>",
-      "resource": "https://seller.example.com/api/inference",
-      "extra": {
-        "escrowProgramId": "Escr...",
-        "bankAddress": "Bank...",
-        "oracleAuthorities": ["OracLe1...", "OracLe2..."],
-        "oracleProfiles": [
-          {
-            "profileId": "x402/oracles/api-quality/v1",
-            "operatorPubkey": "OracLe1...",
-            "registry": "https://oracle-api.example.com/v1/registry"
-          },
-          {
-            "profileId": "x402/oracles/api-quality/v1",
-            "operatorPubkey": "OracLe2...",
-            "registry": "https://oracle-api.alt.example.com/v1/registry"
-          }
-        ]
-      }
+  "accepts": [{
+    "scheme": "v2:solana:sla-escrow",
+    "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "maxAmountRequired": "1000000",
+    "payTo": "<escrow-pda>",
+    "extra": {
+      "escrowProgramId": "SEsc...",
+      "bankAddress": "Bank...",
+      "oracleAuthorities": ["OracLe1...", "OracLe2..."],
+      "oracleProfiles": [
+        { "profileId": "x402/oracles/api-quality/v1",
+          "operatorPubkey": "OracLe1...",
+          "registry": "https://oracle.example.com/v1/registry" }
+      ],
+      "slaHash": "<64-hex>",
+      "paymentUidHex": "<64-hex>"
     }
-  ],
-  "resource": { "...": "..." }
+  }]
 }
 ```
 
-Three fields matter for oracle selection:
+`extra.slaHash` and `extra.paymentUidHex` are present in the delegated
+flow only.
 
-| Field                             | Meaning                                                         |
-| --------------------------------- | --------------------------------------------------------------- |
-| `extra.oracleAuthorities[]`       | The pubkeys the seller authorizes (mirror of `oracleProfiles`). |
-| `extra.oracleProfiles[]`          | What each oracle does, where its registry lives.                |
-| `extra.oracleProfiles[].profileId`| Which delivery category (api-quality, onchain-transfer, file-delivery). |
+## 2. Pick the oracle
 
-If `oracleProfiles[]` is missing or empty, the seller hasn't
-formalized the oracle choice — see [§6](#6-when-the-seller-doesnt-advertise-oracleprofiles).
+Rules of thumb:
 
-## 2. Pick the right oracle
+- **Profile must match the delivery category.** JSON HTTP response →
+  `api-quality/v1`. SPL transfer → `onchain-transfer/v1`. Large file →
+  `file-delivery/attestation/v1`.
+- **One oracle per payment.** The on-chain `Payment` binds one
+  `oracle_authority`; not changeable later.
+- **If multiple oracles match the profile**, prefer one you've used,
+  one with lower fetch latency to the seller, or the first listed
+  (seller's stated preference).
 
-Use these rules of thumb:
-
-1. **Profile must match the delivery category**. If the resource
-   returns a JSON response, you want `x402/oracles/api-quality/v1`. If the
-   seller is delivering an SPL transfer, `x402/oracles/onchain-transfer/v1`. If
-   it's a large file, `x402/oracles/file-delivery/attestation/v1`. The seller
-   normally only advertises profiles compatible with what they sell.
-2. **One oracle per payment**. The on-chain `Payment` binds **one**
-   `oracle_authority`. Pick before funding; you cannot change later.
-3. **If multiple oracles are advertised for the same profile**, prefer:
-   - One you have prior good experience with.
-   - One whose registry and operator you trust more.
-   - One closer to the seller's region (lower fetch latency → faster
-     settlement).
-   - In a tie, the **first** listed entry — that's the seller's
-     stated preference.
-4. **Default fall-through**: if you need a tiebreaker and don't know
-   the operators, hit `GET https://<your-pr402>/api/v1/facilitator/capabilities`
-   and see if it advertises a `slaEscrowDefaultOracle` for the profile
-   — that's the deployment's recommended default.
-5. **For token-transfer scenarios specifically**: pr402 ships and
-   operates a built-in `oracle-onchain-transfer` instance. It appears
-   in `slaEscrowOracleProfiles[]` with profile id
-   `x402/oracles/onchain-transfer/v1` whenever the deployment has the
-   built-in oracle enabled. If the seller doesn't advertise their own,
-   the built-in is a sensible default — your trust in it is your trust
-   in the pr402 operator. For other profiles (api-quality,
-   file-delivery), prefer an oracle the seller advertises in their
-   HTTP-402 challenge; pr402 reviews ecosystem oracles editorially but
-   does not operate them.
-
-For most simple buyers: pick `oracleProfiles[0].operatorPubkey` and
-move on.
-
-## 3. Fund the escrow via pr402
-
-This is the only on-chain action you take. Two HTTP calls plus one
-signature.
-
-> **You author the SLA bytes.** The seller publishes their *terms* (in
-> `accepts[].extra` and any reference docs), but the SLA document that
-> goes on-chain is *yours*. Two fields in particular are buyer-controlled
-> and bind this payment uniquely to its SLA:
->
-> - **`payment_uid`** (required, 64 hex). Bake this in *before* hashing.
->   pr402 returns it on `/build-sla-escrow-payment-tx`; you can also pass
->   one in. Defends against the seller submitting evidence taken for
->   another payment against this one.
-> - **`buyer_nonce`** (optional, 64 hex, 32 random bytes). When two
->   different payments use identical SLA terms, the nonce gives them
->   distinct hashes, so a seller can't replay one's evidence against the
->   other. Generate a fresh one per payment with `openssl rand -hex 32`.
->
-> The seller fetches your SLA bytes back from the oracle's content-
-> addressed registry (`GET /v1/registry/<sla_hash>`) and echoes both
-> fields in their evidence. The oracle re-fetches both, compares, rejects
-> on mismatch.
+Before funding, check the oracle's `/v1/policy` and `/health`:
 
 ```bash
-PR402="https://ipay.sh"   # or your trusted facilitator
+curl -s "$ORACLE/v1/policy" | jq '.tipFloorEnabled, .registeredProfiles, .minVerdictTipDefaultRaw'
+curl -s "$ORACLE/health"
+```
+
+`registeredProfiles` is a single-element array for any one binary.
+
+## 3. Fund the escrow
+
+### 3.1 Direct authoring path
+
+```bash
+PR402="https://ipay.sh"
 BUYER_PUBKEY="<your-wallet>"
-ACCEPTED='<the JSON object from accepts[0]>'        # paste verbatim
-RESOURCE='<the JSON value of "resource">'           # paste verbatim
+ACCEPTED='<the JSON object from accepts[0]>'
+RESOURCE='<the JSON value of "resource">'
 
-# 0. Decide on the SLA. Get a payment_uid first (pr402 will use it later
-#    if you pass it in; otherwise pr402 generates and returns one in the
-#    build response — but then you'd have to author the SLA after the
-#    build, hash it, then re-call build with the hash, an extra round-trip).
-PAYMENT_UID="$(openssl rand -hex 32)"          # 64 hex chars
-BUYER_NONCE="$(openssl rand -hex 32)"          # optional but recommended
+# 0. Prepare buyer-controlled fields.
+PAYMENT_UID="$(openssl rand -hex 32)"
+BUYER_NONCE="$(openssl rand -hex 32)"
 
-# Author the SLA using the seller's terms + your two fields. The exact
-# shape varies per profile (see SELLER_GUIDE.md or the profile's
-# NORMATIVE.md). For api-quality:
+# 1. Author the SLA. Shape per profile (see SELLER_GUIDE or per-family NORMATIVE.md).
 cat > sla.json <<EOF
 {
   "version": 1,
@@ -169,212 +122,164 @@ cat > sla.json <<EOF
 }
 EOF
 
-# Hash locally — this is what goes on-chain.
+# 2. Hash locally over the exact bytes you will send to the seller.
 SLA_HASH="$(shasum -a 256 sla.json | awk '{print $1}')"
 
-# Hand sla.json to the seller (any out-of-band channel). Seller uploads to
-# the oracle registry with their bearer token; the registry returns the
-# hash. Confirm it matches your local SLA_HASH before signing FundPayment.
+# 3. Hand sla.json bytes to the seller. Seller uploads to the oracle's
+#    registry with their bearer; the registry returns the SHA-256.
+
+# 4. SHOULD: confirm the registry actually has the bytes (spec §3.2 #1).
+curl -fsSI "$ORACLE/v1/registry/$SLA_HASH" -o /dev/null \
+  || { echo "registry HEAD failed; abort"; exit 1; }
 
 ORACLE_AUTHORITY="$(echo "$ACCEPTED" | jq -r .extra.oracleProfiles[0].operatorPubkey)"
 
-# 1. Ask pr402 to build the unsigned FundPayment transaction.
+# 5. Build, sign, and submit FundPayment.
 BUILD_BODY=$(jq -n \
   --arg payer "$BUYER_PUBKEY" \
   --argjson accepted "$ACCEPTED" \
   --argjson resource "$RESOURCE" \
   --arg slaHash "$SLA_HASH" \
   --arg oracleAuthority "$ORACLE_AUTHORITY" \
-  --arg paymentUid "$PAYMENT_UID" \
-  '{payer:$payer, accepted:$accepted, resource:$resource, slaHash:$slaHash, oracleAuthority:$oracleAuthority, paymentUid:$paymentUid}')
+  --arg paymentUidHex "$PAYMENT_UID" \
+  '{payer:$payer, accepted:$accepted, resource:$resource,
+    slaHash:$slaHash, oracleAuthority:$oracleAuthority,
+    paymentUidHex:$paymentUidHex}')
 
 UNSIGNED=$(curl -fsS -X POST "$PR402/api/v1/facilitator/build-sla-escrow-payment-tx" \
-    -H "Content-Type: application/json" \
-    -d "$BUILD_BODY")
+    -H "Content-Type: application/json" -d "$BUILD_BODY")
 
-# 2. Sign the returned base64 transaction with your wallet (CLI example).
-echo "$UNSIGNED" | jq -r .transactionBase64 \
-    | base64 -d > /tmp/tx.unsigned
-solana sign-and-submit /tmp/tx.unsigned \
-    --keypair /path/to/buyer-keypair.json \
+echo "$UNSIGNED" | jq -r .transactionBase64 | base64 -d > /tmp/tx.unsigned
+solana sign-and-submit /tmp/tx.unsigned --keypair /path/to/buyer-keypair.json \
     --url mainnet-beta
-
-# 3. Settle via pr402 (fills verifyBodyTemplate, then /verify + /settle).
-#    The build response carries `verifyBodyTemplate` — fill its
-#    `paymentPayload.payload.transaction` field with your signed base64
-#    and POST the whole template to /verify and /settle.
 ```
 
-If you use `pr402-buy` (the buyer-starter CLI), the four steps above
-collapse into a single command. See
-[`x402-buyer-starter`](../../x402-buyer-starter/) for the wrapper.
+### 3.2 Delegated authoring path (HTTP 402)
 
-> **What pr402 enforces for you.** Before building the TX, pr402 checks
-> that your `oracleAuthority` is in `accepted.extra.oracleAuthorities[]`.
-> If it isn't, the build call returns `400` and you don't waste a
-> blockhash. This is your first line of defense against typos.
-
-## 4. After payment — what happens next
-
-You don't do anything else. The flow continues server-side:
-
-1. The seller produces the deliverable.
-2. The seller uploads the SLA + delivery (or blob) to the oracle's
-   registry, getting back hashes.
-3. The seller calls `submit_delivery` on-chain with the
-   `delivery_hash`.
-4. The oracle observes the on-chain event, fetches the SLA + delivery
-   from its registry, evaluates, and submits `confirm_oracle` with
-   approve / reject.
-5. If approved, the funds release to the seller (via `release_payment`,
-   which any party can call).
-6. If rejected, **you call `refund_payment` yourself** once the on-chain
-   `Config.refund_cooldown_seconds` elapses since funding. Your wallet/SDK
-   should watch the `Payment.resolution_state` field — when it transitions
-   to `2` (Rejected), schedule the refund tx for time
-   `payment.created_at + Config.refund_cooldown_seconds`.
-
-   **Important: read the cooldown from the chain, don't hard-code it.**
-   The current pr402 deployment uses `86400` (24 hours), but the on-chain
-   admin can update it via `UpdateConfig` to as little as `3600` (1 hour,
-   the program's enforced floor). Always derive the schedule from the
-   live `Config` account so your refund timing stays correct across
-   deployments.
-
-You can monitor the payment's state via the on-chain `Payment` PDA or
-by hitting the oracle's `GET /health` and `GET /stats` (no auth) for a
-high-level "is the oracle alive and processing".
-
-## 5. Verifying the verdict (optional but recommended for high-value)
-
-The on-chain `Payment.resolution_hash` is a deterministic SHA-256
-fingerprint of the verdict. Anyone holding the SLA + delivery bytes can
-recompute it and confirm the oracle didn't lie. The recipe lives in
-[`SLA_ESCROW_PROTOCOL.md` §5](SLA_ESCROW_PROTOCOL.md#5-trust-boundaries),
-and the property test
-[`oracle-common/tests/cross_family_properties.rs`](../oracle-common/tests/cross_family_properties.rs)
-proves the determinism.
-
-For most buyers this is unnecessary. For high-value or auditable flows:
+The seller hands you `slaHash` and `paymentUidHex` in the 402 response.
+Your `BUILD_BODY` then contains the seller-supplied values verbatim:
 
 ```bash
-# Pseudo-recipe; full implementation in oracle-common::settler.
-# Re-fetch the SLA + delivery you saved.
-# Recompute compute_resolution_hash(...) per the canonical envelope.
-# Compare against the on-chain Payment.resolution_hash.
+SLA_HASH="$(echo "$ACCEPTED" | jq -r .extra.slaHash)"
+PAYMENT_UID="$(echo "$ACCEPTED" | jq -r .extra.paymentUidHex)"
+ORACLE_AUTHORITY="$(echo "$ACCEPTED" | jq -r .extra.oracleProfiles[0].operatorPubkey)"
+# ...same BUILD_BODY + sign + submit as above.
 ```
 
-If they don't match, the oracle has tampered. File a dispute via the
-operator's contact channel; on-chain refund is governed by the
-`sla-escrow` program's expiry rules.
+**Verify intent before signing** (spec §3.2 #2). Three options in
+increasing strength:
 
-## 6. When the seller doesn't advertise `oracleProfiles[]`
+1. Trust the seller's published template.
+2. Recompute locally from the same parameters and the seller's
+   documented template (recommended for high-value).
+3. Fetch the SLA bytes from the registry post-funding and compare
+   against your intent — if it diverges, the buyer can self-refund
+   pre-delivery (subject to cooldown).
 
-Some sellers list only the legacy `oracleAuthorities[]` array without
-the richer `oracleProfiles[]`. That's fine for a single canonical
-profile — you have to know the profile out-of-band. Defaults to assume:
+## 4. After payment
 
-- If the seller advertises `oracleAuthorities[]` and the resource looks
-  like an HTTP API, assume `x402/oracles/api-quality/v1`.
-- Hit `GET https://<your-pr402>/api/v1/facilitator/capabilities` →
-  `slaEscrowOracleProfiles[]` is the deployment's advertised profile list
-  for SLA-escrow.
+You don't do anything else unless settlement needs your action. The
+flow continues server-side: seller delivers, oracle adjudicates, anyone
+can call `ReleasePayment` post-approval (spec §7).
 
-If you can't determine the profile confidently, **don't fund the
-escrow** — ask the seller or pick a different one.
+If the oracle rejects (`Payment.resolution_state == 2`), refund is
+**permissionless** post-rejection — any signer can trigger it,
+including you. The cooldown is waived once a rejection is recorded.
+
+If the payment expires without a verdict, refund is also permissionless
+(after `expires_at`). Any signer can trigger.
+
+```bash
+sla-escrow refund-payment --payment-uid "$PAYMENT_UID" \
+  --keypair /path/to/buyer-keypair.json --url mainnet-beta
+```
+
+**Pre-outcome refund** (you change your mind before the oracle has
+ruled) requires you to wait for `Config.refund_cooldown_seconds` to
+elapse since funding. Read the cooldown live from chain — don't
+hard-code. The current pr402 deployment runs at 24h.
+
+## 5. Verifying the verdict
+
+Optional but recommended for high-value flows. The on-chain
+`Payment.resolution_hash` is a deterministic SHA-256 over a canonical
+envelope; anyone holding SLA + delivery bytes can recompute and
+confirm. See `oracle-common::settler` for the implementation.
+
+If they don't match, the oracle has tampered. Recourse is off-chain
+operator reputation; the protocol does not currently support on-chain
+dispute.
+
+## 6. When `oracleProfiles[]` is missing
+
+Some sellers list only the legacy `oracleAuthorities[]`. Defaults to
+assume:
+
+- If the resource looks like an HTTP API, assume `api-quality/v1`.
+- Hit `GET <pr402>/api/v1/facilitator/capabilities` for the
+  deployment's advertised SLA-escrow profile list.
+
+If you can't determine the profile confidently, **don't fund** — ask
+the seller or pick a different one.
 
 ## 7. Common pitfalls
 
-**Wrong `oracleAuthority`.** The most common buyer error.
-`oracleAuthority` you pass to `build-sla-escrow-payment-tx` **must** be
-in `accepted.extra.oracleAuthorities[]`. pr402 catches typos at build
-time with a clear `400` error.
+**Wrong `oracleAuthority`.** Most common error. The pubkey must be in
+`accepted.extra.oracleAuthorities[]`. pr402 returns `400` on mismatch.
 
-**`slaHash` mismatch.** You computed the hash, the seller computed a
-different hash. Always use the SHA-256 of **the exact bytes the seller
-will upload** (or that the seller's reference SLA file shows). Don't
-re-serialize.
+**`slaHash` mismatch.** Direct authoring: hash over the exact bytes
+the seller will upload, no re-serialization. Delegated authoring:
+verify intent (spec §3.2 #2).
 
-**Profile mismatch.** Seller advertises `x402/oracles/api-quality/v1`, but
-buyer picked an `oracle-onchain-transfer` operator pubkey. The on-chain
-`FundPayment` succeeds but the chosen oracle silently ignores it (it
-won't dispatch a non-matching profile). The escrow stays stuck until
-expiry. Fix: only pick an `operatorPubkey` whose `profileId` matches the
-seller's resource.
+**Profile mismatch.** Seller advertises `api-quality/v1`, buyer picks
+an `onchain-transfer` operator. `FundPayment` succeeds but the oracle
+silently ignores it (no matching profile). Escrow stays stuck until
+expiry.
 
-**Funding for the wrong cluster.** `oracle-onchain-transfer` binaries
-are pinned to one cluster (`mainnet` / `devnet` / `testnet`). If
-your tx is on the wrong cluster vs the oracle's, you'll get
-`Custom(258) ClusterMismatch`. pr402 doesn't catch this — confirm with
-the seller.
+**Wrong cluster.** `onchain-transfer` binaries are cluster-pinned. Tx
+on the wrong cluster gets `TRANSFER_CLUSTER_MISMATCH` (code 261).
+pr402 doesn't catch this — confirm with the seller.
 
-**Ignoring the oracle's `/health`.** Before paying, hit
-`GET https://<oracle-host>/health`. If `chain_connected: false` or
-`websocket_connected: false`, the oracle isn't processing right now —
-defer or pick a different operator.
+**Ignoring `/health`.** If `chain_connected` or `websocket_connected`
+is false, the oracle isn't processing. Defer or pick another operator.
 
-## 8. Quick sanity check before you fund
+## 8. Quick sanity check before funding
 
-- [ ] `accepted.scheme` == `"v2:solana:sla-escrow"`.
-- [ ] `accepted.extra.oracleAuthorities[]` is non-empty.
-- [ ] Your chosen `oracleAuthority` is in that array.
-- [ ] (If `oracleProfiles[]` is present) the matching entry's
-      `profileId` is what you expect.
-- [ ] The chosen oracle's `/health` returns `200` with
-      `chain_connected=true` and `websocket_connected=true`.
-- [ ] The seller's `slaHash` matches what you'd compute over the bytes
-      they handed you.
+- [ ] `accepted.scheme == "v2:solana:sla-escrow"`.
+- [ ] `accepted.extra.oracleAuthorities[]` is non-empty and includes
+      your chosen `oracleAuthority`.
+- [ ] `oracleProfiles[]` entry's `profileId` matches the resource.
+- [ ] Oracle's `/health` returns 200 with `chain_connected=true` and
+      `websocket_connected=true`.
+- [ ] Oracle's `/v1/policy` is acceptable (tip floor, registered
+      profile).
+- [ ] (Direct authoring) `HEAD /v1/registry/<slaHash>` returns 200.
+- [ ] (Delegated authoring) `slaHash` reflects your intent (recompute
+      or post-fund verify).
 
 ## 9. FAQ
 
 **Why does pr402 only enforce `oracleAuthorities[]` and not the
 profile?** Profiles are off-chain metadata; the on-chain
-`FundPayment.oracle_authority` is what matters for `confirm_oracle`.
+`FundPayment.oracle_authority` is what matters for `ConfirmOracle`.
 pr402 enforces the on-chain identity match; profile enforcement is the
-buyer's responsibility (helped by the docs above).
+buyer's responsibility.
 
-**What if the oracle goes down between payment and verdict?** The on-chain
-`Payment.expires_at` protects you. If the deadline passes without a
-verdict, you can refund. Choose oracles with stable operators and
-publish-known SLAs around uptime if it matters.
+**Oracle goes down between payment and verdict.** `Payment.expires_at`
+protects you. If the deadline passes without a verdict, refund is
+permissionless. Choose oracles with stable operators.
 
-**Can I switch oracles after funding?** No. The on-chain
-`oracle_authority` is committed at FundPayment. If the chosen oracle
-goes silent, your only path is to wait for expiry and refund.
+**Can I switch oracles after funding?** No. `oracle_authority` is
+permanently bound at funding. Wait for expiry and refund.
 
-**Does the oracle see my customer data?** Whatever the seller uploads
-to the oracle's registry. The oracle's operator can read those bytes.
-If the deliverable is sensitive, talk to the seller about
-end-to-end encryption (which is application-layer, not part of v1).
+**Does the oracle see my customer data?** Whatever the seller uploads.
+If the deliverable is sensitive, talk to the seller about end-to-end
+encryption (application-layer; not part of v1).
 
-**Why are there three different oracles instead of one?** Different
-delivery shapes (JSON / on-chain tx / large file) need different
-verification logic. Each oracle binary registers exactly one profile;
-the architecture is one keypair per oracle for blast-radius isolation.
-You don't need to care — just pick by profile.
+**Why three different oracles instead of one?** Each oracle binary
+registers exactly one profile (one keypair per profile, blast-radius
+isolation). You don't need to care — pick by profile.
 
-**Where do I see verdict history for my payments?** On-chain via the
-`Payment` PDA's `resolution_state` and `resolution_hash`. The oracle's
-public `GET /stats` shows aggregate counters but not per-payment
-detail (operator policy gates that).
-
----
-
-## Appendix — What pr402 does for you under the hood
-
-When you POST to `/build-sla-escrow-payment-tx`, pr402:
-
-1. Validates `slaHash` is 64 hex chars.
-2. Parses `oracleAuthority` as a Solana pubkey.
-3. Reads `accepted.extra.oracleAuthorities[]`, asserts the parsed
-   `oracleAuthority` is one of them. **400** otherwise.
-4. Resolves the seller wallet from `accepted.payTo` / `extra`.
-5. Resolves the escrow + bank PDAs from the program's seeds.
-6. Builds an unsigned `FundPayment` instruction wrapped in a versioned
-   transaction with the right compute-budget config.
-7. Returns the unsigned TX + `verifyBodyTemplate` you fill with your
-   signed bytes.
-
-You sign and submit. `verifyBodyTemplate` carries the same payload
-shape pr402's `/verify` and `/settle` accept, so the next two calls
-are mechanical.
+**Where do I see verdict history?** On-chain via the `Payment` PDA's
+`resolution_state` / `resolution_hash`. Oracle's `GET /stats` shows
+aggregate counters only.
