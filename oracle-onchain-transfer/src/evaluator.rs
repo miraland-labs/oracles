@@ -45,6 +45,7 @@ use oracle_common::{
     resolution_codes::onchain_transfer,
     types::{CheckResult, EvaluationResult, EvidenceKey},
 };
+use serde_json::json;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcTransactionConfig};
 use solana_sdk::{commitment_config::CommitmentConfig, signature::Signature};
 use solana_transaction_status::{
@@ -89,12 +90,17 @@ impl OracleEvaluator for TransferEvaluator {
     ) -> Result<EvaluationResult, OracleError> {
         // P-OT-1: cluster pinning.
         if sla.cluster != self.cluster {
-            return Ok(reject(
-                onchain_transfer::TRANSFER_CLUSTER_MISMATCH,
-                "cluster",
-                &format!(
-                    "SLA cluster {:?} differs from binary cluster {:?}",
-                    sla.cluster, self.cluster
+            return Ok(finish(
+                sla,
+                evidence,
+                None,
+                reject(
+                    onchain_transfer::TRANSFER_CLUSTER_MISMATCH,
+                    "cluster",
+                    &format!(
+                        "SLA cluster {:?} differs from binary cluster {:?}",
+                        sla.cluster, self.cluster
+                    ),
                 ),
             ));
         }
@@ -106,17 +112,27 @@ impl OracleEvaluator for TransferEvaluator {
         let observation = match fetch_observation(ctx.rpc, &evidence.tx_signature).await {
             Ok(o) => o,
             Err(FetchError::SignatureFormat(e)) => {
-                return Ok(reject(
-                    onchain_transfer::TRANSFER_TX_NOT_FOUND,
-                    "tx_signature",
-                    &format!("invalid signature: {e}"),
+                return Ok(finish(
+                    sla,
+                    evidence,
+                    None,
+                    reject(
+                        onchain_transfer::TRANSFER_TX_NOT_FOUND,
+                        "tx_signature",
+                        &format!("invalid signature: {e}"),
+                    ),
                 ));
             }
             Err(FetchError::NotFound) => {
-                return Ok(reject(
-                    onchain_transfer::TRANSFER_TX_NOT_FOUND,
-                    "tx_signature",
-                    "RPC returned no transaction for this signature",
+                return Ok(finish(
+                    sla,
+                    evidence,
+                    None,
+                    reject(
+                        onchain_transfer::TRANSFER_TX_NOT_FOUND,
+                        "tx_signature",
+                        "RPC returned no transaction for this signature",
+                    ),
                 ));
             }
             Err(FetchError::Transport(msg)) => {
@@ -143,38 +159,53 @@ impl OracleEvaluator for TransferEvaluator {
         if verdict.approved {
             let want_uid = hex::encode(ctx.job.payment_uid);
             if !sla.payment_uid.eq_ignore_ascii_case(&want_uid) {
-                return Ok(reject(
-                    onchain_transfer::TRANSFER_PAYMENT_UID_MISMATCH,
-                    "sla.payment_uid",
-                    &format!(
-                        "sla.payment_uid {} differs from on-chain payment_uid {}",
-                        sla.payment_uid, want_uid
+                return Ok(finish(
+                    sla,
+                    evidence,
+                    Some(&observation),
+                    reject(
+                        onchain_transfer::TRANSFER_PAYMENT_UID_MISMATCH,
+                        "sla.payment_uid",
+                        &format!(
+                            "sla.payment_uid {} differs from on-chain payment_uid {}",
+                            sla.payment_uid, want_uid
+                        ),
                     ),
                 ));
             }
             if !evidence.payment_uid.eq_ignore_ascii_case(&want_uid) {
-                return Ok(reject(
-                    onchain_transfer::TRANSFER_PAYMENT_UID_MISMATCH,
-                    "evidence.payment_uid",
-                    &format!(
-                        "evidence.payment_uid {} differs from on-chain payment_uid {}",
-                        evidence.payment_uid, want_uid
+                return Ok(finish(
+                    sla,
+                    evidence,
+                    Some(&observation),
+                    reject(
+                        onchain_transfer::TRANSFER_PAYMENT_UID_MISMATCH,
+                        "evidence.payment_uid",
+                        &format!(
+                            "evidence.payment_uid {} differs from on-chain payment_uid {}",
+                            evidence.payment_uid, want_uid
+                        ),
                     ),
                 ));
             }
             if let Some(want_nonce) = sla.buyer_nonce.as_deref() {
                 let got = evidence.buyer_nonce.as_deref().unwrap_or("");
                 if got.is_empty() || !got.eq_ignore_ascii_case(want_nonce) {
-                    return Ok(reject(
-                        onchain_transfer::TRANSFER_BUYER_NONCE_MISMATCH,
-                        "buyer_nonce",
-                        &if got.is_empty() {
-                            "SLA carries buyer_nonce but evidence is missing one".into()
-                        } else {
-                            format!(
-                                "evidence.buyer_nonce {got} differs from sla.buyer_nonce {want_nonce}"
-                            )
-                        },
+                    return Ok(finish(
+                        sla,
+                        evidence,
+                        Some(&observation),
+                        reject(
+                            onchain_transfer::TRANSFER_BUYER_NONCE_MISMATCH,
+                            "buyer_nonce",
+                            &if got.is_empty() {
+                                "SLA carries buyer_nonce but evidence is missing one".into()
+                            } else {
+                                format!(
+                                    "evidence.buyer_nonce {got} differs from sla.buyer_nonce {want_nonce}"
+                                )
+                            },
+                        ),
                     ));
                 }
             }
@@ -196,12 +227,17 @@ impl OracleEvaluator for TransferEvaluator {
                     .await
                 {
                     Ok(true) => {
-                        return Ok(reject(
-                            onchain_transfer::TRANSFER_TX_SIGNATURE_REUSED,
-                            "tx_signature",
-                            &format!(
-                                "tx_signature {} was already settled for a different payment_uid; cross-payment replay refused",
-                                evidence.tx_signature
+                        return Ok(finish(
+                            sla,
+                            evidence,
+                            Some(&observation),
+                            reject(
+                                onchain_transfer::TRANSFER_TX_SIGNATURE_REUSED,
+                                "tx_signature",
+                                &format!(
+                                    "tx_signature {} was already settled for a different payment_uid; cross-payment replay refused",
+                                    evidence.tx_signature
+                                ),
                             ),
                         ));
                     }
@@ -215,7 +251,7 @@ impl OracleEvaluator for TransferEvaluator {
             }
         }
 
-        Ok(verdict)
+        Ok(finish(sla, evidence, Some(&observation), verdict))
     }
 
     fn evidence_keys(&self, _sla: &Self::Sla, evidence: &Self::Evidence) -> Vec<EvidenceKey> {
@@ -241,6 +277,8 @@ pub struct TxObservation {
     pub failed: bool,
     /// `meta.block_time` — used for `deadline_unix` enforcement when set.
     pub block_time: Option<i64>,
+    /// Chain slot from `getTransaction` when available.
+    pub slot: Option<u64>,
     /// `meta.preTokenBalances`.
     pub pre_token_balances: Vec<TokenBalance>,
     /// `meta.postTokenBalances`.
@@ -476,6 +514,7 @@ pub fn verify_observed_transfer(
         approved: true,
         resolution_reason: 0,
         checks,
+        resolution_details: None,
     }
 }
 
@@ -506,7 +545,86 @@ fn reject(reason: u16, name: &str, detail: &str) -> EvaluationResult {
             passed: false,
             detail: detail.into(),
         }],
+        resolution_details: None,
     }
+}
+
+/// Attach normative resolution-envelope `details` per onchain-transfer §7.
+fn finish(
+    sla: &TransferSla,
+    evidence: &TransferEvidence,
+    observation: Option<&TxObservation>,
+    mut verdict: EvaluationResult,
+) -> EvaluationResult {
+    verdict.resolution_details = Some(build_resolution_details(
+        sla,
+        evidence,
+        observation,
+        &verdict,
+    ));
+    verdict
+}
+
+fn build_resolution_details(
+    sla: &TransferSla,
+    evidence: &TransferEvidence,
+    observation: Option<&TxObservation>,
+    verdict: &EvaluationResult,
+) -> serde_json::Value {
+    let cluster = serde_json::to_value(sla.cluster).unwrap_or(json!("unknown"));
+    let verified_transfers = observation
+        .map(|obs| verified_transfers_for_observation(sla, obs, verdict))
+        .unwrap_or_default();
+
+    json!({
+        "txSignature": evidence.tx_signature,
+        "cluster": cluster,
+        "verifiedTransfers": verified_transfers,
+        "blockTime": observation.and_then(|o| o.block_time),
+        "slot": observation.and_then(|o| o.slot),
+    })
+}
+
+fn verified_transfers_for_observation(
+    sla: &TransferSla,
+    observation: &TxObservation,
+    verdict: &EvaluationResult,
+) -> Vec<serde_json::Value> {
+    sla.expected_transfers
+        .iter()
+        .enumerate()
+        .map(|(idx, expected)| {
+            let check_name = format!("expected_transfer[{idx}]");
+            let post = find_balance(
+                &observation.post_token_balances,
+                &expected.mint,
+                &expected.recipient_owner,
+            );
+            let pre = find_balance(
+                &observation.pre_token_balances,
+                &expected.mint,
+                &expected.recipient_owner,
+            );
+            let pre_amount = pre
+                .map(|b| parse_amount_or_zero(&b.amount))
+                .unwrap_or(0i128);
+            let post_amount = post
+                .map(|b| parse_amount_or_zero(&b.amount))
+                .unwrap_or(0i128);
+            let delta = post_amount - pre_amount;
+            let satisfied = verdict.approved
+                || verdict
+                    .checks
+                    .iter()
+                    .any(|c| c.name == check_name && c.passed);
+            json!({
+                "mint": expected.mint,
+                "recipientOwner": expected.recipient_owner,
+                "delta": delta.to_string(),
+                "satisfied": satisfied,
+            })
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -548,12 +666,13 @@ async fn fetch_observation(
 }
 
 fn snapshot_from_encoded(enc: &EncodedConfirmedTransactionWithStatusMeta) -> TxObservation {
-    snapshot_from_value(&enc.transaction, enc.block_time)
+    snapshot_from_value(&enc.transaction, enc.block_time, Some(enc.slot))
 }
 
 fn snapshot_from_value(
     enc: &EncodedTransactionWithStatusMeta,
     block_time_override: Option<i64>,
+    slot: Option<u64>,
 ) -> TxObservation {
     let meta = enc.meta.as_ref();
     let failed = meta.map(|m| m.err.is_some()).unwrap_or(false);
@@ -567,6 +686,7 @@ fn snapshot_from_value(
     TxObservation {
         failed,
         block_time,
+        slot,
         pre_token_balances: pre,
         post_token_balances: post,
     }
@@ -627,6 +747,7 @@ mod tests {
         TxObservation {
             failed,
             block_time,
+            slot: None,
             pre_token_balances: pre,
             post_token_balances: post,
         }

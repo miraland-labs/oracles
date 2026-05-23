@@ -89,6 +89,7 @@ pub async fn run_worker(state: Arc<AppState>, mut job_rx: mpsc::Receiver<Evaluat
                             approved: false,
                             resolution_reason: reason_code,
                             checks: vec![],
+                            resolution_details: None,
                         };
                         let resolution_hash = settler::compute_resolution_hash(
                             &job,
@@ -264,6 +265,7 @@ pub async fn run_worker(state: Arc<AppState>, mut job_rx: mpsc::Receiver<Evaluat
                                     approved: false,
                                     resolution_reason: reason_code,
                                     checks: vec![],
+                                    resolution_details: None,
                                 },
                                 serde_json::json!({
                                     "reason": e.to_string(),

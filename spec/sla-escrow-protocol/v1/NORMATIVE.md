@@ -13,7 +13,11 @@ that surrounds the on-chain `sla-escrow` program at program version
 pr402 facilitator) plus settlement ownership rules.
 
 > For per-family verdict semantics, see the profile-specific normatives
-> under `oracles/oracle-*/spec/<profile>/NORMATIVE.md`. The on-chain
+> under `Layer 2 profile normatives (see `spec/sla-document/v1/NORMATIVE.md` §5 profile index)`. For HTTP 402
+> purchase intent and delegated authoring, see
+> `x402/delegated-authoring/v1`. For
+> pr402 wire formats, see
+> `x402/pr402-discovery/v1`. The on-chain
 > program is the authoritative source for validation logic; this document
 > is normative for actor obligations and settlement triggers off-chain
 > and at the public instruction surface.
@@ -76,9 +80,11 @@ guarantees in §8.
 - **Hashing**: SHA-256 (32 bytes) for `sla_hash`, `delivery_hash`,
   `resolution_hash`. Hex encoding when transmitted as text.
 - **Signing**: Ed25519 over Solana's standard pubkey/signature scheme.
-- **Encoding**: All JSON documents canonicalized per the rules in the
-  `sla-document/v1` spec (sorted keys, compact separators, UTF-8) before
-  hashing.
+- **Encoding**: SLA and delivery artifacts commit to **specific UTF-8
+  bytes** per `sla-document/v1` §3. Direct authoring uses buyer-supplied
+  bytes (`raw-bytes`). Delegated authoring uses a named serialization
+  recipe declared in the seller's intent contract (see
+  `delegated-authoring/v1` §4).
 
 ---
 
@@ -106,31 +112,22 @@ A buyer **MUST**:
 
 #### 3.1.2 Delegated authoring (HTTP 402 flow)
 
-The buyer expresses intent via HTTP request parameters; the seller
-constructs the SLA JSON, computes `sla_hash`, and returns the hash in
-the `accepts[].extra.slaHash` field of the HTTP 402 response. This is
-the canonical flow for x402-paid HTTP services where the buyer's
-client (often an AI agent) does not assemble protocol-level JSON
-directly.
+Used when the buyer expresses **purchase intent** on an unpaid HTTP request
+instead of supplying final SLA bytes. Rules: `x402/delegated-authoring/v1`.
 
 A buyer **MUST**:
 
-1. Issue the unpaid HTTP request to the seller's endpoint with the
-   intent-bearing parameters (e.g., `?asset=USDC&amount=100`).
-2. Receive a `402 Payment Required` response containing
-   `accepts[].extra.slaHash` (the hash) and the corresponding
-   `paymentUid`, `oracleAuthorities`, etc.
-3. Verify the seller's `slaHash` reflects the buyer's intent — see
-   §3.2 for SHOULD-level recommendations.
+1. Obtain the seller's **intent contract** and send all required intent
+   parameters on the unpaid request.
+2. Receive HTTP 402 with scheme `sla-escrow` per `pr402-discovery/v1`.
+3. Follow the declared **commit variant** (`buyer-commit` or
+   `seller-precommit`) to determine who computes `sla_hash` before
+   `FundPayment`.
+4. Verify **deliverable terms** (not only escrow principal) match intent
+   before signing.
+5. Select `oracle_authority` from the 402 advertisement.
 
-In delegated authoring, the seller is the SLA author. The buyer's
-correctness guarantee comes from the on-chain commit (§3.1.3 below)
-binding funds to a specific hash, regardless of how that hash was
-produced. A dishonest seller producing an SLA that diverges from the
-buyer's intent does not redirect funds — funds always go to
-`payment.seller` per the program's destination check — but produces a
-flow whose oracle outcome may not match what the buyer thought they
-were buying.
+Example bindings (informative, non-normative): `x402/informative/bindings/`.
 
 #### 3.1.3 Common to both patterns
 
@@ -141,11 +138,13 @@ Regardless of authoring pattern, a buyer **MUST**:
    with this payment (the program does not support rotation). In
    delegated authoring, the buyer selects from the
    `oracleAuthorities` array in the 402 response.
-2. Choose or accept a `payment_uid` that is unique within the buyer's
-   namespace. The on-chain program does not enforce uniqueness across
-   buyers; the PDA collision risk is the buyer's responsibility. In
-   delegated authoring, the seller proposes a `payment_uid` in the
-   402 response and the buyer accepts by signing it.
+2. Choose a `payment_uid` that is unique within the buyer's namespace.
+   Prefer 32 raw bytes encoded as 64 lowercase hex (`paymentUidHex` in
+   pr402 build). The on-chain program does not enforce cross-buyer
+   uniqueness; PDA collision is the buyer's responsibility. In
+   **`seller-precommit`** delegated authoring, the seller MAY propose
+   `paymentUid` in the 402 response; in **`buyer-commit`**, the buyer
+   MUST generate `payment_uid` before building the SLA.
 3. Construct and sign `FundPayment`, transferring tokens into escrow
    with the `(payment_uid, sla_hash, oracle_authority, seller, mint,
    amount, ttl_seconds)` arguments. The on-chain payment is bound to
@@ -300,9 +299,11 @@ A seller **MUST**:
    returns the SHA-256 of the uploaded bytes. The seller relays this
    hash back to the buyer:
    - in direct authoring: along with any service-specific response;
-   - in delegated authoring: as the `accepts[].extra.slaHash` field of
-     the HTTP `402 Payment Required` response, alongside the
-     corresponding `paymentUid`, `oracleAuthorities`, etc.
+   - in delegated authoring **`seller-precommit`**: relay `slaHash` in
+     `accepts[].extra` on the 402 response;
+   - in delegated authoring **`buyer-commit`**: upload after payment
+     verification on the paid path (hash already on-chain from buyer's
+     `FundPayment`).
 4. Perform the work described in the SLA document.
 5. After completion, produce delivery evidence per the profile's
    per-family normative (e.g., `tx_signature` for `onchain-transfer/v1`).
@@ -353,33 +354,11 @@ A seller **MUST NOT**:
    content-addressed by SHA-256; modification produces a new hash and
    leaves the original on-chain reference unchanged.
 
-### 4.6 Delegated authoring requirements
+### 4.6 Delegated authoring
 
-A seller implementing delegated authoring (§3.1.2) **MUST** additionally:
-
-1. **Produce deterministic SLA bytes.** Given the same inputs (buyer's
-   intent-bearing parameters plus seller-side context), the seller's
-   SLA generator MUST produce byte-identical output. This is required
-   because the seller produces the SLA twice — once on the unpaid 402
-   path (to compute the hash), once on the paid path (to upload to the
-   registry after receiving the buyer's `FundPayment`). Non-determinism
-   would mean the bytes uploaded do not match the hash the buyer
-   signed, causing the oracle to fetch and find content whose digest
-   mismatches `payment.sla_hash` (rejection with `EvidenceUnavailable`
-   or hash-mismatch, depending on the registry's stored bytes). The
-   reference seller in `spl-token-balance-serverless` achieves this
-   via a sorted-keys / no-whitespace canonicalizer in `sla_builder.rs`.
-2. **Document the SLA template.** The seller MUST publish the
-   structure of the generated SLA (which fields, how they map from
-   request parameters) so a buyer practicing intent verification
-   (§3.2 #2) can recompute the hash locally. Hosting the template as
-   part of the seller's public API documentation is sufficient.
-3. **Verify the buyer's `FundPayment.sla_hash` matches the seller's
-   recomputed hash before uploading the SLA to the registry.** This
-   protects sellers from a buyer who signs a hash inconsistent with
-   the parameters in their request (whether by attack or client bug).
-   Mismatch SHOULD be returned as `400 Bad Request` to the buyer
-   without paying gas.
+Sellers **MUST** comply with `x402/delegated-authoring/v1`
+and publish an intent contract. Domain-specific parameter names belong in
+that contract or an informative binding — not in Layer 0–1 core specs.
 
 ### 4.7 Rationale
 
@@ -423,11 +402,13 @@ An oracle **MUST**:
      registry.
    - Re-verify both hashes against the bytes received.
    - Apply the per-family verdict logic.
-4. Submit `ConfirmOracle` on-chain with `(payment_uid, delivery_hash,
-   resolution_hash, resolution_state, resolution_reason)`. The program
-   rejects if `delivery_hash` does not match the on-chain
-   `payment.delivery_hash`.
-5. Compute `resolution_hash` per `x402/oracles/resolution-envelope/v1`.
+4. Submit `ConfirmOracle` on-chain; the Payment PDA is identified by
+   accounts, not instruction body fields. Instruction body carries
+   `delivery_hash`, `resolution_hash`, `resolution_state`, and
+   `resolution_reason`. The program rejects if `delivery_hash` does not
+   match `payment.delivery_hash`.
+5. Compute `resolution_hash` per
+   `x402/oracles/resolution-envelope/v1`.
 6. Refuse to verdict if `now > payment.expires_at` (the program will
    also reject with `PaymentExpired`, but the oracle SHOULD avoid wasting
    gas on a doomed transaction).
@@ -575,7 +556,7 @@ trigger.
 | Path | Trigger condition | Canonical actor | Other actors that MAY trigger |
 |---|---|---|---|
 | **Release post-approval** | `resolution_state == 1` AND not expired | seller | buyer, pr402, any third-party keeper |
-| **Release expired-delivered** | expired AND delivery submitted AND not rejected | seller | buyer, pr402, any third-party keeper |
+| **Release expired-delivered** | expired AND delivery submitted AND `resolution_state == 0` (oracle silent) OR approved | seller | buyer, pr402, any third-party keeper |
 | **Refund post-rejection** | `resolution_state == 2` (pre-expiry or expired) | buyer | seller, pr402, any third-party keeper |
 | **Refund expired-undelivered** | expired AND no delivery AND not approved | buyer | seller, pr402, any third-party keeper |
 | **Refund pre-outcome (cancellation)** | `resolution_state == 0` AND cooldown elapsed (buyer) OR by mutual agreement (seller / admin) | buyer (with cooldown) or seller | admin (override) |
@@ -655,16 +636,19 @@ A future `v2` of this protocol spec will be drafted only in response to:
 | Reference | Purpose |
 |---|---|
 | Deployed program at `SEsc…rHprJ` (mainnet) and `s5zk…r4ZH` (devnet) | Authoritative validation logic |
-| Per-family normatives (`oracles/oracle-*/spec/<profile>/NORMATIVE.md`) | Verdict semantics per profile |
-| `oracles/oracle-common/src/registry/api.rs` | Registry endpoint source of truth (this repo) |
-| `oracles/oracle-common/src/server.rs` | `/v1/policy` endpoint source of truth (this repo) |
-| `registry-http-api/v1/NORMATIVE.md` (planned) | Wire-level registry spec |
-| `sla-document/v1/NORMATIVE.md` (planned) | SLA envelope canonicalization |
-| `x402/oracles/resolution-envelope/v1` | Cross-profile resolution envelope (per-family normatives reference this) |
+| `x402/serialization-recipes/v1` | Named serializers |
+| `x402/delegated-authoring/v1` | HTTP 402 purchase intent |
+| `x402/informative/bindings/` | Non-normative product bindings |
+| `x402/pr402-discovery/v1` | pr402 wire formats |
+| `x402/oracles/resolution-envelope/v1` | `resolution_hash` recipe |
+| `x402/oracle-policy-http-api/v1` | `GET /v1/policy` |
+| `x402/registry-http-api/v1` | Registry HTTP API |
+| `x402/sla-document/v1` | SLA byte commitment |
+| Per-family normatives (`Layer 2 profile normatives (see `spec/sla-document/v1/NORMATIVE.md` §5 profile index)`) | Verdict semantics per profile |
 | RFC 2119 / RFC 8174 | Keyword interpretation |
 
 ---
 
-**Document version:** v1.0
+**Document version:** v1.2
 **Tracks program version:** sla-escrow `0.4.0+` (mainnet), `0.2.11+` (devnet)
-**Last verified against code:** 2026-05-22
+**Last verified against code:** 2026-05-23

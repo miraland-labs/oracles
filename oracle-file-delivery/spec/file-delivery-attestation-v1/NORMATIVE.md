@@ -11,6 +11,7 @@ already committed under SHA-256 to the on-chain `delivery_hash`.
 > This document is normative for the per-profile rules; the protocol doc is
 > normative for the wire-level interaction.
 
+
 ---
 
 ## Abstract

@@ -112,6 +112,7 @@ mod tests {
                     passed: approved,
                     detail: format!("sla.ok={} evidence.ok={}", sla.ok, evidence.ok),
                 }],
+                resolution_details: None,
             })
         }
     }

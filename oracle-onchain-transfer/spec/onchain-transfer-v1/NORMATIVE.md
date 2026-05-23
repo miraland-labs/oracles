@@ -11,6 +11,7 @@ transfer / swap** adjudication on a single Solana cluster.
 > This document is normative for the per-profile rules; the protocol doc is
 > normative for the wire-level interaction.
 
+
 ---
 
 ## Abstract
@@ -307,6 +308,12 @@ Builds for this profile MAY omit `slot` when the RPC does not surface it; the
 deterministic `compute_resolution_hash` recipe normalizes by always including
 the field as `null` in that case.
 
+Evaluators **MUST** populate this object (not the full SLA document) on
+`EvaluationResult.resolution_details` before the shared pipeline computes
+`resolution_hash`. Reject paths **SHOULD** still include `txSignature`,
+`cluster`, and per-transfer rows with `satisfied: false` when observation
+data is available.
+
 ---
 
 ## 8. Versioning and extensibility
@@ -320,5 +327,6 @@ the field as `null` in that case.
 ## 9. References
 
 * Cross-actor protocol: [`SLA_ESCROW_PROTOCOL.md`](../../../docs/SLA_ESCROW_PROTOCOL.md).
+* Reason codes: `x402/reason-codes/v1` §3.
 * Implementation: [`oracle-onchain-transfer/src/evaluator.rs`](../../src/evaluator.rs)
   — see `verify_observed_transfer` for the pure check battery.

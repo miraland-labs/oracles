@@ -7,9 +7,8 @@ x402 ecosystem.
 **Mount point:** routes are mounted under `/v1/registry/...` on the
 oracle's HTTP server.
 
-> For the cross-actor flow that uses this API, see
-> `sla-escrow-protocol/v1/NORMATIVE.md`. For SLA document canonicalization,
-> see `sla-document/v1/NORMATIVE.md` (planned).
+> For the cross-actor flow that uses this API, see `x402/sla-escrow-protocol/v1`.
+> For SLA byte commitment, see `x402/sla-document/v1`.
 
 ---
 
@@ -662,12 +661,12 @@ A conformant **oracle implementation** (consuming the registry):
 
 | Reference | Purpose |
 |---|---|
-| `oracles/oracle-common/src/registry/api.rs` | Reference implementation (this repo) |
-| `oracles/oracle-common/src/registry/auth.rs` | Reference auth implementation (this repo) |
-| `oracles/oracle-common/src/registry/storage.rs` | Reference storage backends (this repo) |
-| `sla-escrow-protocol/v1/NORMATIVE.md` | Cross-actor protocol that uses this API |
-| Per-family normatives (`oracles/oracle-*/spec/<profile>/NORMATIVE.md`) | SLA / delivery JSON shapes |
-| `sla-document/v1/NORMATIVE.md` (planned) | SLA envelope canonicalization |
+| `oracle-common/src/registry/api.rs` | Reference implementation (this repo) |
+| `oracle-common/src/registry/auth.rs` | Reference auth implementation (this repo) |
+| `oracle-common/src/registry/storage.rs` | Reference storage backends (this repo) |
+| `x402/oracle-policy-http-api/v1` | `GET /v1/policy` (tip floors) |
+| `x402/sla-escrow-protocol/v1` | Cross-actor protocol |
+| `x402/sla-document/v1` | SLA byte commitment |
 | RFC 2119 / RFC 8174 | Keyword interpretation |
 | RFC 3339 | Timestamp format |
 | Ed25519 (RFC 8032) | Signature scheme |
@@ -675,5 +674,5 @@ A conformant **oracle implementation** (consuming the registry):
 
 ---
 
-**Document version:** v1.0
-**Last verified against reference implementation:** 2026-05-22
+**Document version:** v1.1
+**Last verified against reference implementation:** 2026-05-23

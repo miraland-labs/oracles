@@ -332,6 +332,7 @@ mod tests {
                 passed: true,
                 detail: "ok".into(),
             }],
+            resolution_details: None,
         }
     }
 
@@ -410,6 +411,7 @@ mod tests {
                 approved,
                 resolution_reason: reason,
                 checks: vec![],
+                resolution_details: None,
             };
             let a = compute_resolution_hash(&j, "x402/test/v1", &r, json!(null)).unwrap();
             let b = compute_resolution_hash(&j, "x402/test/v1", &r, json!(null)).unwrap();

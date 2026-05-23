@@ -110,6 +110,7 @@ proptest! {
             approved,
             resolution_reason: reason,
             checks: vec![],
+            resolution_details: None,
         };
         let a = compute_resolution_hash(&j, "x402/test/v1", &r, json!({"k": "v"})).unwrap();
         let b = compute_resolution_hash(&j, "x402/test/v1", &r, json!({"k": "v"})).unwrap();
@@ -129,6 +130,7 @@ proptest! {
             approved: true,
             resolution_reason: 0,
             checks: vec![],
+            resolution_details: None,
         };
         let base =
             compute_resolution_hash(&j, "x402/test/v1", &r, json!({"k": "v"})).unwrap();
@@ -157,6 +159,7 @@ proptest! {
                 passed: true,
                 detail: "ok".into(),
             }],
+            resolution_details: None,
         };
         let h = compute_resolution_hash(&j, "x402/test/v1", &r, json!(null)).unwrap();
         prop_assert_ne!(h, [0u8; 32]);

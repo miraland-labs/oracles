@@ -59,6 +59,7 @@ fn approve() -> EvaluationResult {
             passed: true,
             detail: "ok".into(),
         }],
+        resolution_details: None,
     }
 }
 

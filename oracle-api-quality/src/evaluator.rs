@@ -272,6 +272,7 @@ impl ApiQualityEvaluator {
             approved,
             resolution_reason,
             checks,
+            resolution_details: None,
         }
     }
 }

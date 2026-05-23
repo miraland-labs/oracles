@@ -10,12 +10,12 @@ Solana program's public on-chain interface.
 - Solana devnet: `s5zkKiy8FD9nFdAhQZoHHV3G8s4QCPzE4cR9U4Hr4ZH`
 
 > For per-actor obligations and authorization rules, see
-> [`sla-escrow-protocol/v1`](../../sla-escrow-protocol/v1/NORMATIVE.md).
+> `x402/sla-escrow-protocol/v1`.
+> For HTTP 402 delegated authoring, see
+> `x402/delegated-authoring/v1`.
 > For the registry HTTP contract, see
-> [`registry-http-api/v1`](../../registry-http-api/v1/NORMATIVE.md).
-> This document is the wire-level on-chain contract; integrators in any
-> language can build instructions and parse account state from this spec
-> alone.
+> `x402/registry-http-api/v1`.
+> For fee and tip formulas, see §7.3 below.
 
 ---
 
@@ -287,7 +287,7 @@ for this spec (see §5.9).
 
 For the full authorization rules per instruction, including
 post-v0.4.0 permissionless settlement, see
-[`sla-escrow-protocol/v1`](../../sla-escrow-protocol/v1/NORMATIVE.md)
+`x402/sla-escrow-protocol/v1`
 §7.
 
 ### 5.2 `FundPayment` (discriminator 0)
@@ -728,6 +728,27 @@ the oracle's per-family `NORMATIVE.md`.
 For per-family code allocations, see the per-family `NORMATIVE.md`
 under `oracles/oracle-*/spec/<profile>/`.
 
+### 7.3 Fee and oracle tip formulas
+
+Protocol fee at release (deducted from escrowed principal):
+
+```text
+protocol_fee_raw = min(payment.amount,
+                       max(payment.min_fee_amount,
+                           floor(payment.amount * payment.fee_bps / 10000)))
+```
+
+Oracle tip at release or refund when a verdict was rendered
+(`resolution_state ∈ {1, 2}`) and `oracle_fee_bps > 0`:
+
+```text
+oracle_tip_raw = floor(payment.amount * payment.oracle_fee_bps / 10000)
+```
+
+Oracle tip accounts are required on `ReleasePayment` / `RefundPayment`
+when `oracle_fee_bps > 0` and `resolution_state != 0` (see §5.3, §5.4).
+Tip floor policy is off-chain (`oracle-policy-http-api/v1`).
+
 ---
 
 ## 8. State machine
@@ -801,12 +822,17 @@ v0.4.1 changing internal validation) do NOT require a spec bump.
 | Reference | Purpose |
 |---|---|
 | Deployed program at `SEsc…rHprJ` (mainnet) and `s5zk…r4ZH` (devnet) | Authoritative bytes |
-| [`sla-escrow-protocol/v1`](../../sla-escrow-protocol/v1/NORMATIVE.md) | Per-actor obligations and authorization rules |
-| [`registry-http-api/v1`](../../registry-http-api/v1/NORMATIVE.md) | HTTP contract for the oracle registry |
-| [`sla-document/v1`](../../sla-document/v1/NORMATIVE.md) | Cross-family SLA envelope |
+| `x402/sla-escrow-protocol/v1` | Per-actor obligations and authorization rules |
+| `x402/registry-http-api/v1` | HTTP contract for the oracle registry |
+| `x402/sla-document/v1` | Cross-family SLA envelope |
+| `x402/oracles/resolution-envelope/v1` | Resolution hash |
+| `x402/oracle-policy-http-api/v1` | Tip floors |
+| `x402/serialization-recipes/v1` | Recipe registry |
+| `x402/delegated-authoring/v1` | HTTP 402 intent |
+| `x402/pr402-discovery/v1` | pr402 wire formats |
 | RFC 2119 / RFC 8174 | Keyword interpretation |
 
 ---
 
-**Document version:** v1.0
-**Last verified against deployed binary:** 2026-05-22
+**Document version:** v1.1
+**Last verified against deployed binary:** 2026-05-23

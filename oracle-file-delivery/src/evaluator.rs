@@ -124,6 +124,7 @@ impl OracleEvaluator for FileDeliveryEvaluator {
                             approved: false,
                             resolution_reason: file_delivery::BLOB_DELIVERY_HASH_REUSED,
                             checks,
+                            resolution_details: None,
                         });
                     }
                     Ok(false) => {}
@@ -141,6 +142,7 @@ impl OracleEvaluator for FileDeliveryEvaluator {
             approved,
             resolution_reason,
             checks,
+            resolution_details: None,
         })
     }
 

@@ -64,11 +64,14 @@ pub struct EvaluationJob {
 /// `resolution_reason` is drawn from `sla_escrow_api::resolution::ResolutionReason`:
 /// standard codes 0..=255 are interoperable; custom codes ≥256 are partitioned per
 /// family in [`crate::resolution_codes`].
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EvaluationResult {
     pub approved: bool,
     pub resolution_reason: u16,
     pub checks: Vec<CheckResult>,
+    /// Per-profile resolution envelope `details` (not serialized on wire to clients).
+    #[serde(skip)]
+    pub resolution_details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -172,6 +175,7 @@ mod tests {
                 passed: false,
                 detail: "delta=1, want >=10".into(),
             }],
+            resolution_details: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: EvaluationResult = serde_json::from_str(&json).unwrap();

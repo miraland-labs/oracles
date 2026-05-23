@@ -109,12 +109,20 @@ seller transmission will produce a different byte sequence and a
 different hash. The buyer's local copy and the bytes sent to the seller
 must be the same byte sequence.
 
-### 3.3 Conformance
+### 3.4 Delegated authoring
+
+Delegated flows **MUST** declare a `serializationRecipeId` from
+`x402/serialization-recipes/v1`
+in the seller's intent contract. The committed bytes are the recipe output.
+
+Direct authoring **MUST** use `x402/raw-bytes/v1`.
+
+### 3.5 Conformance
 
 Conformant implementations:
 
-- **MUST NOT** apply JCS or any other canonicalization between the
-  buyer's hash computation and the registry upload.
+- **MUST NOT** apply an undeclared serializer between hash computation
+  and registry upload (see `serialization-recipes/v1`).
 - **MUST** treat `sla_hash` as a commitment to specific bytes, not to
   a structural JSON value.
 - **SHOULD** retain the original `B_sla` bytes locally until at least
@@ -214,7 +222,7 @@ normatives MAY require them.
 
 | Field | Type | Notes |
 |---|---|---|
-| `payment_uid` | string (32-byte hex) | The intended `payment_uid` for the on-chain `Payment` PDA. Including it lets oracles cross-check that the SLA document was authored for the specific payment they are evaluating. |
+| `payment_uid` | string (hex-64) | 32-byte on-chain `payment_uid` as 64 lowercase hex characters. MUST match `paymentUidHex` used in pr402 build. See `sla-escrow-onchain-abi/v1` §2.5 and `pr402-discovery/v1` §4. |
 | `buyer_nonce` | string (base64 or hex) | A buyer-chosen nonce that ensures `sla_hash` is unique even when the SLA fields are otherwise identical across payments. RECOMMENDED for buyers issuing many SLAs with similar shapes. |
 | `cluster` | string | Solana cluster (`mainnet-beta`, `devnet`, `testnet`). REQUIRED by some per-family normatives (e.g. `onchain-transfer/v1`). |
 
@@ -360,8 +368,10 @@ profile-id-based dispatch protects against silent misinterpretation.
 
 | Reference | Purpose |
 |---|---|
-| `sla-escrow-protocol/v1/NORMATIVE.md` | Cross-actor protocol that uses this envelope |
-| `registry-http-api/v1/NORMATIVE.md` | Wire-level registry contract for upload/fetch |
+| `x402/serialization-recipes/v1` | Recipe registry |
+| `x402/delegated-authoring/v1` | Delegated authoring |
+| `x402/sla-escrow-protocol/v1` | Cross-actor protocol |
+| `x402/registry-http-api/v1` | Registry HTTP API |
 | `oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md` | Reference per-family extension |
 | `oracle-api-quality/spec/api-quality-v1/NORMATIVE.md` | Reference per-family extension |
 | `oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md` | Reference per-family extension (binary delivery, JSON SLA) |
@@ -371,5 +381,5 @@ profile-id-based dispatch protects against silent misinterpretation.
 
 ---
 
-**Document version:** v1.0
-**Last verified against per-family references:** 2026-05-22
+**Document version:** v1.1
+**Last verified against per-family references:** 2026-05-23

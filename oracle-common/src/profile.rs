@@ -14,7 +14,6 @@ use async_trait::async_trait;
 use crate::{
     error::OracleError,
     evaluator::{EvaluationContext, OracleEvaluator},
-    settler::compute_resolution_hash_typed,
     types::EvaluationOutcome,
 };
 
@@ -108,8 +107,16 @@ where
             .await?;
         let result = self.evaluator.evaluate(ctx, &sla, &evidence).await?;
         let evidence_keys = self.evaluator.evidence_keys(&sla, &evidence);
-        let resolution_hash =
-            compute_resolution_hash_typed(ctx.job, self.evaluator.profile_id(), &result, &sla)?;
+        let details = result
+            .resolution_details
+            .clone()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let resolution_hash = crate::settler::compute_resolution_hash(
+            ctx.job,
+            self.evaluator.profile_id(),
+            &result,
+            details,
+        )?;
         Ok(EvaluationOutcome {
             result,
             resolution_hash,

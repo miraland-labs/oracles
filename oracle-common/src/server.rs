@@ -42,6 +42,7 @@ use tower_http::{
 use crate::{
     config::OracleConfig,
     db::OracleDb,
+    economics::USDC_DEFAULT_FLOOR_RAW,
     pipeline,
     profile::ProfileRegistry,
     settler,
@@ -205,15 +206,20 @@ async fn policy(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         None
     };
 
+    // Echo the effective default floor buyers will encounter (includes implicit
+    // USDC fallback when operator enabled floors but left default unset).
+    let effective_default = if cfg.tip_floor_enabled {
+        cfg.min_verdict_tip_default_raw
+            .or(Some(USDC_DEFAULT_FLOOR_RAW))
+    } else {
+        None
+    };
+
     Json(serde_json::json!({
         "operatorPubkey": cfg.oracle_pubkey().to_string(),
         "programId": cfg.escrow_program_id.to_string(),
         "tipFloorEnabled": cfg.tip_floor_enabled,
-        "minVerdictTipDefaultRaw": if cfg.tip_floor_enabled {
-            cfg.min_verdict_tip_default_raw
-        } else {
-            None
-        },
+        "minVerdictTipDefaultRaw": effective_default,
         "minVerdictTipByMintRaw": min_by_mint,
         "guardianRejectSafetyMarginSec": cfg.guardian_reject_safety_margin_sec,
         "guardianMaxRetryAttempts": cfg.guardian_max_retry_attempts,
