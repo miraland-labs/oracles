@@ -16,7 +16,7 @@
 # Prerequisites (set up by `oracle-deploy.sh` in this directory):
 #   /etc/oracle/onchain-transfer-devnet.env
 #   /var/lib/oracle/onchain-transfer-devnet/oracle-keypair.json (mode 0600)
-#   docker image: oracle-onchain-transfer:current
+#   docker image: oracle-onchain-transfer-devnet:current
 
 [Unit]
 Description=x402 oracle-onchain-transfer (devnet) — Dockerized
@@ -43,7 +43,7 @@ ExecStart=/usr/bin/docker run \
     --cpus 1 \
     --log-driver journald \
     --log-opt tag=oracle-onchain-transfer-devnet \
-    oracle-onchain-transfer:current
+    oracle-onchain-transfer-devnet:current
 
 ExecStop=/usr/bin/docker stop -t 15 oracle-onchain-transfer-devnet
 

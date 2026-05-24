@@ -14,6 +14,10 @@ categories = ["web-programming", "cryptography"]
 name = "oracle-api-quality"
 path = "src/main.rs"
 
+[features]
+default = []
+devnet = ["oracle-common/devnet"]
+
 [dependencies]
 oracle-common = { workspace = true }
 sla-escrow-api = { workspace = true }

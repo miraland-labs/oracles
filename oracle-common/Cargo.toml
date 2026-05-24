@@ -10,6 +10,10 @@ description = "Shared library for x402 SLA-Escrow oracle implementations"
 keywords = ["x402", "oracle", "sla", "solana"]
 categories = ["web-programming", "cryptography"]
 
+[features]
+default = []
+devnet = ["sla-escrow-api/devnet"]
+
 [dependencies]
 sla-escrow-api = { workspace = true }
 

@@ -18,7 +18,7 @@
 # Prerequisites (set up by `oracle-deploy.sh` in this directory):
 #   /etc/oracle/onchain-transfer-mainnet.env
 #   /var/lib/oracle/onchain-transfer-mainnet/oracle-keypair.json (mode 0600)
-#   docker image: oracle-onchain-transfer:current
+#   docker image: oracle-onchain-transfer-mainnet:current
 
 [Unit]
 Description=x402 oracle-onchain-transfer (mainnet) — Dockerized
@@ -45,7 +45,7 @@ ExecStart=/usr/bin/docker run \
     --cpus 1 \
     --log-driver journald \
     --log-opt tag=oracle-onchain-transfer-mainnet \
-    oracle-onchain-transfer:current
+    oracle-onchain-transfer-mainnet:current
 
 ExecStop=/usr/bin/docker stop -t 15 oracle-onchain-transfer-mainnet
 

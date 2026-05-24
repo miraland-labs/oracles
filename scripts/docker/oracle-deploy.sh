@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Deploy a Dockerized oracle unit on this host.
 #
-# Builds a SHA-tagged image of `oracle-<family>:<sha>`, retags it as
-# `oracle-<family>:current` (the tag every systemd unit references),
+# Builds a SHA-tagged image of `oracle-<family>-<cluster>:<sha>`, retags it as
+# `oracle-<family>-<cluster>:current` (the tag every systemd unit references),
 # restarts the named systemd unit, and probes /health. On health failure,
 # the previous SHA tag is restored as `:current` and the unit is
 # restarted, so a bad build never leaves you with a broken oracle.
@@ -24,7 +24,7 @@
 #   --health-port <port>   Override the /health probe port. Auto-detected
 #                          from the env file's BIND_ADDR when not given.
 #   --health-timeout <s>   Probe deadline; default 30s.
-#   --skip-build           Don't rebuild; expect oracle-<family>:<sha> to be local.
+#   --skip-build           Don't rebuild; expect oracle-<family>-<cluster>:<sha> to be local.
 #   --rollback             Restore oracle-<family>:previous → :current and restart.
 
 set -euo pipefail
@@ -61,6 +61,31 @@ done
 UNIT_SUFFIX="${UNIT#oracle-}"
 ENV_FILE="/etc/oracle/${UNIT_SUFFIX}.env"
 
+# Derive Solana cluster from the unit suffix. Required — each cluster gets its
+# own Docker image tag so devnet and mainnet deploys on one host never fight
+# over a shared :current tag.
+detect_cluster() {
+    case "$UNIT_SUFFIX" in
+        *-devnet)   echo devnet ;;
+        *-mainnet)  echo mainnet ;;
+        *-testnet)  echo testnet ;;
+        *)          echo "" ;;
+    esac
+}
+
+CLUSTER="$(detect_cluster)"
+if [[ -z "$CLUSTER" ]]; then
+    echo "could not derive cluster from --unit=${UNIT}" >&2
+    echo "unit suffix must end in -devnet, -mainnet, or -testnet" >&2
+    exit 64
+fi
+
+# Devnet builds enable sla-escrow-api's compile-time devnet program id.
+CARGO_FEATURES=""
+if [[ "$CLUSTER" == devnet ]]; then
+    CARGO_FEATURES="devnet"
+fi
+
 # Auto-detect FAMILY from the unit name. Walk known families and pick the
 # first prefix match. Operator can override with --family.
 if [[ -z "$FAMILY" ]]; then
@@ -73,7 +98,7 @@ if [[ -z "$FAMILY" ]]; then
     exit 64
 fi
 
-IMAGE="oracle-${FAMILY}"
+IMAGE="oracle-${FAMILY}-${CLUSTER}"
 SERVICE="${UNIT}.service"
 
 # ----- Workspace root resolution --------------------------------------------
@@ -247,19 +272,14 @@ if (( SKIP_BUILD )); then
     fi
     echo "[deploy] reusing existing image ${IMAGE_SHA}"
 else
-    echo "[deploy] building ${IMAGE_SHA} from ${WORKSPACE_ROOT}"
-    # --network host: build needs egress on port 80 (debian apt) and 443
-    # (crates.io). Docker's default bridge network is unreliable for this
-    # on many cloud and on-prem hosts (asymmetric routing, MTU mismatch,
-    # port-80 filtering). The build container is short-lived and only
-    # fetches public packages, so host networking carries no extra risk.
-    # The runtime container still uses host networking deliberately
-    # (see Dockerfile and the systemd unit) for the Postgres connection.
+    echo "[deploy] building ${IMAGE_SHA} from ${WORKSPACE_ROOT} (cluster=${CLUSTER}, features=${CARGO_FEATURES:-none})"
     DOCKER_BUILDKIT=1 docker build \
         --network host \
         -f "${WORKSPACE_ROOT}/scripts/docker/Dockerfile" \
         --build-arg "FAMILY=${FAMILY}" \
+        --build-arg "CARGO_FEATURES=${CARGO_FEATURES}" \
         --label "x402.oracle.family=${FAMILY}" \
+        --label "x402.oracle.cluster=${CLUSTER}" \
         --label "x402.oracle.sha=${SHA}" \
         -t "${IMAGE_SHA}" \
         "${WORKSPACE_ROOT}"

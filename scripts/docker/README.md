@@ -13,9 +13,9 @@ This sits alongside the native-binary path in
 
 | File | Role |
 | --- | --- |
-| `Dockerfile` | Multi-stage build: `rust:1.92-slim` builder → `debian:12-slim` runtime. Cluster-agnostic; the same image runs against any cluster via env vars. |
-| `oracle-onchain-transfer-devnet.service` | systemd unit for the devnet container. References `oracle-onchain-transfer:current`. |
-| `oracle-onchain-transfer-mainnet.service` | systemd unit for the mainnet container. Same image, different env file, different port. |
+| `Dockerfile` | Multi-stage build: `rust:1.92-slim` builder → `debian:12-slim` runtime. Pass `CARGO_FEATURES=devnet` for devnet program id; one image tag per cluster. |
+| `oracle-onchain-transfer-devnet.service` | systemd unit for the devnet container. References `oracle-onchain-transfer-devnet:current`. |
+| `oracle-onchain-transfer-mainnet.service` | systemd unit for the mainnet container. References `oracle-onchain-transfer-mainnet:current`. |
 | `onchain-transfer-devnet.env.example` | Reference env file for devnet. Copy to `/etc/oracle/onchain-transfer-devnet.env` and fill in. |
 | `onchain-transfer-mainnet.env.example` | Reference env file for mainnet. Copy to `/etc/oracle/onchain-transfer-mainnet.env` and fill in. |
 | `oracle-deploy.sh` | Build + tag + restart + health-probe. Auto-rolls back on health failure. Pass `--unit oracle-onchain-transfer-devnet` (default) or `--unit oracle-onchain-transfer-mainnet`. |
@@ -28,7 +28,7 @@ files).
 
 | Concern | devnet | mainnet | Why decoupled |
 | --- | --- | --- | --- |
-| Docker image | `oracle-onchain-transfer:current` | `oracle-onchain-transfer:current` | Same image; cluster bound at runtime via env vars. |
+| Docker image | `oracle-onchain-transfer-devnet:current` | `oracle-onchain-transfer-mainnet:current` | Separate tags; devnet build uses `--features devnet`. |
 | Container name | `oracle-onchain-transfer-devnet` | `oracle-onchain-transfer-mainnet` | systemd unit names match, no `docker run` collision. |
 | systemd unit | `oracle-onchain-transfer-devnet.service` | `oracle-onchain-transfer-mainnet.service` | Each unit is enabled/restarted independently. |
 | Env file | `/etc/oracle/onchain-transfer-devnet.env` | `/etc/oracle/onchain-transfer-mainnet.env` | Different RPC URL, ESCROW_PROGRAM_ID, TRANSFER_CLUSTER, BIND_ADDR. |
@@ -300,16 +300,24 @@ sudo bash scripts/docker/oracle-deploy.sh \
 
 ## How it works
 
-**Image tag pattern**:
-- `oracle-onchain-transfer:<sha>` is what the deploy script builds.
-- `oracle-onchain-transfer:current` is what every systemd unit references.
-- `oracle-onchain-transfer:previous` is preserved automatically before
-  every retag, so `--rollback` always has a target.
+**Image tag pattern** (one namespace per cluster — no shared `:current`):
 
-The image is cluster-agnostic. The same `oracle-onchain-transfer:current`
-tag is used by both the devnet and mainnet units; cluster binding is in
-the env file (`SOLANA_RPC_URL`, `ESCROW_PROGRAM_ID`, `TRANSFER_CLUSTER`),
-not in the binary.
+- `oracle-onchain-transfer-devnet:<sha>` / `oracle-onchain-transfer-mainnet:<sha>` — what the deploy script builds.
+- `oracle-onchain-transfer-<cluster>:current` — what the matching systemd unit references.
+- `oracle-onchain-transfer-<cluster>:previous` — preserved automatically before every retag, so `--rollback` always has a target.
+
+**Build vs runtime cluster binding:**
+
+- **Build time:** `--unit …-devnet` passes `CARGO_FEATURES=devnet` so `sla-escrow-api` links the devnet `declare_id!`. Mainnet/testnet units build without features (mainnet program id).
+- **Runtime:** each env file still sets `ESCROW_PROGRAM_ID`, `SOLANA_RPC_URL`, and `TRANSFER_CLUSTER`. Monitor and settler use the runtime program id; compile-time id is fallback only.
+
+Deploy both clusters from **one git branch** — no branch checkout per cluster:
+
+```bash
+git pull   # single branch (e.g. main)
+sudo bash scripts/docker/oracle-deploy.sh --unit oracle-onchain-transfer-devnet
+sudo bash scripts/docker/oracle-deploy.sh --unit oracle-onchain-transfer-mainnet
+```
 
 **Networking**: `--network host` puts each container on the host's network
 namespace. `127.0.0.1:5432` inside the container reaches the host's

@@ -8,6 +8,10 @@ authors.workspace = true
 rust-version.workspace = true
 description = "Reputation indexer for the x402 SLA-Escrow ecosystem. Decodes on-chain payment-lifecycle events into a queryable Postgres ledger."
 
+[features]
+default = []
+devnet = ["sla-escrow-api/devnet"]
+
 [[bin]]
 name = "oracle-reputation"
 path = "src/main.rs"
