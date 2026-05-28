@@ -146,9 +146,17 @@ time.
                     ▼
   ┌────────────────────────────────────┐
   │ 8. ReleasePayment / RefundPayment  │
-  │    (anyone can call once resolved) │
+  │    **Settlement Keeper (optional)**  │
+  │    or buyer/seller manual settle   │
+  │    (permissionless post-outcome)   │
   │    • state=1 → release to seller   │
   │    • state=2 → refund to buyer     │
+  └────────────────────────────────────┘
+                    │
+                    ▼
+  ┌────────────────────────────────────┐
+  │ 9. ClosePayment (optional keeper)  │
+  │    Rent reclamation after closed_at│
   └────────────────────────────────────┘
 ```
 

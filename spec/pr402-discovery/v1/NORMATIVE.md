@@ -95,7 +95,8 @@ capabilities/`/supported` response for the target network and overlay
 seller-specific values.
 
 When a facilitator **elevates** a seller's Lite challenge to full sla-escrow
-metadata (pr402 `/upgrade` or equivalent), it **MUST** merge institutional
+metadata (pr402 `POST /api/v1/facilitator/payment-required/enrich`, or
+equivalent), it **MUST** merge institutional
 fields into the existing `accepts[].extra` object rather than replacing it,
 so delegated-authoring keys (`commitMaterial`, `intentContractUrl`,
 `oracleProfiles`, …) survive elevation.
