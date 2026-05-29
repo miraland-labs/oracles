@@ -81,8 +81,30 @@ pub mod file_delivery {
 /// Reserved range for the future `x402/compute-result/*` family.
 pub const COMPUTE_RESULT_RANGE: std::ops::RangeInclusive<u16> = 384..=447;
 
+/// Custom resolution-reason codes for `x402/oracles/rwa-transfer/v1`.
+pub mod rwa_transfer {
+    pub const RWA_TOKEN_PROGRAM_MISMATCH: u16 = 448;
+    pub const RWA_TRANSFER_HOOK_MISMATCH: u16 = 449;
+    pub const TRANSFER_TX_NOT_FOUND: u16 = 450;
+    pub const TRANSFER_TX_FAILED: u16 = 451;
+    pub const TRANSFER_AMOUNT_INSUFFICIENT: u16 = 452;
+    pub const TRANSFER_MINT_MISMATCH: u16 = 453;
+    pub const TRANSFER_DEADLINE_EXCEEDED: u16 = 454;
+    pub const TRANSFER_CLUSTER_MISMATCH: u16 = 455;
+    pub const TRANSFER_DIRECTION_MISMATCH: u16 = 456;
+    pub const TRANSFER_SENDER_MISMATCH: u16 = 457;
+    pub const TRANSFER_EVIDENCE_PREDATES_PAYMENT: u16 = 458;
+    pub const TRANSFER_TX_SIGNATURE_REUSED: u16 = 459;
+    pub const TRANSFER_PAYMENT_UID_MISMATCH: u16 = 460;
+    pub const TRANSFER_BUYER_NONCE_MISMATCH: u16 = 461;
+    pub const TRANSFER_BLOCK_TIME_MISSING: u16 = 462;
+    pub const TRANSFER_RECIPIENT_NOT_RESOLVABLE: u16 = 463;
+
+    pub const RANGE: std::ops::RangeInclusive<u16> = 448..=479;
+}
+
 /// Reserved range for ecosystem-wide additions.
-pub const ECOSYSTEM_RESERVED_RANGE: std::ops::RangeInclusive<u16> = 448..=511;
+pub const ECOSYSTEM_RESERVED_RANGE: std::ops::RangeInclusive<u16> = 480..=511;
 
 /// Per-deployment customization range.
 pub const DEPLOYMENT_LOCAL_RANGE: std::ops::RangeInclusive<u16> = 512..=u16::MAX;
@@ -99,7 +121,9 @@ mod tests {
         assert!(file_delivery::RANGE.end() == &383);
         assert!(COMPUTE_RESULT_RANGE.start() == &384);
         assert!(COMPUTE_RESULT_RANGE.end() == &447);
-        assert!(ECOSYSTEM_RESERVED_RANGE.start() == &448);
+        assert!(rwa_transfer::RANGE.start() == &448);
+        assert!(rwa_transfer::RANGE.end() == &479);
+        assert!(ECOSYSTEM_RESERVED_RANGE.start() == &480);
         assert!(ECOSYSTEM_RESERVED_RANGE.end() == &511);
         assert!(DEPLOYMENT_LOCAL_RANGE.start() == &512);
         assert!(DEPLOYMENT_LOCAL_RANGE.end() == &u16::MAX);

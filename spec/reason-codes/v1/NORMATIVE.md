@@ -41,7 +41,8 @@ Exact guardian codes **100–102** are defined in operator runbooks; profiles
 | `256–319` | `x402/oracles/onchain-transfer/*` | On-chain SPL transfer profiles |
 | `320–383` | `x402/oracles/file-delivery/*` | File / blob attestation profiles |
 | `384–447` | `x402/oracles/compute-result/*` | Reserved for compute attestation |
-| `448–511` | Ecosystem | New families — register via errata before use |
+| `448–479` | `x402/oracles/rwa-transfer/*` | RWA Token-2022 primary delivery profiles |
+| `480–511` | Ecosystem | New families — register via errata before use |
 | `512+` | Per-deployment | Private extensions; **MUST NOT** appear in public profile normatives |
 
 New public profiles **MUST** request a range in the `448–511` window (or extend
@@ -87,7 +88,31 @@ an existing family prefix) before shipping.
 
 ---
 
-## 5. Allocation rules
+## 5. RWA transfer v1 codes (448–479)
+
+Normative detail: `x402/oracles/rwa-transfer/v1` §8.
+
+| Code | Constant | Meaning |
+|---|---|---|
+| `448` | `RwaTokenProgramMismatch` | Mint owner ≠ SLA `token_program` |
+| `449` | `RwaTransferHookMismatch` | Hook extension vs SLA mismatch |
+| `450` | `RwaTransferTxNotFound` | RPC missing `tx_signature` |
+| `451` | `RwaTransferTxFailed` | `meta.err` set (includes hook revert) |
+| `452` | `RwaTransferAmountInsufficient` | Delta below `min_amount` |
+| `453` | `RwaTransferMintMismatch` | No matching balance row |
+| `454` | `RwaTransferDeadlineExceeded` | Past `deadline_unix` |
+| `455` | `RwaTransferClusterMismatch` | Cluster ≠ oracle config |
+| `456` | `RwaTransferDirectionMismatch` | Wrong delta sign |
+| `457` | `RwaTransferSenderMismatch` | `sender_owner` pin failed |
+| `458` | `RwaTransferEvidencePredatesPayment` | Evidence before funding |
+| `459` | `RwaTransferTxSignatureReused` | Replay across payments |
+| `460` | `RwaTransferPaymentUidMismatch` | UID binding failure |
+| `461` | `RwaTransferBuyerNonceMismatch` | Nonce echo failure |
+| `462–479` | — | Reserved for rwa-transfer extensions |
+
+---
+
+## 6. Allocation rules
 
 1. First failing check in the documented evaluation order **MUST** determine
    the emitted code (deterministic verdicts).
@@ -100,7 +125,7 @@ an existing family prefix) before shipping.
 
 ---
 
-## 6. References
+## 7. References
 
 | Reference | Purpose |
 |---|---|

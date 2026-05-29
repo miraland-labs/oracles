@@ -260,6 +260,7 @@ Per-family normatives extend this envelope. Conformance rules:
 | `profile_id` | Per-family normative |
 |---|---|
 | `x402/oracles/onchain-transfer/v1` | `oracle-onchain-transfer/spec/onchain-transfer-v1/NORMATIVE.md` |
+| `x402/oracles/rwa-transfer/v1` | `spec/rwa-transfer/v1/NORMATIVE.md` |
 | `x402/oracles/api-quality/v1` | `oracle-api-quality/spec/api-quality-v1/NORMATIVE.md` |
 | `x402/oracles/file-delivery/attestation/v1` | `oracle-file-delivery/spec/file-delivery-attestation-v1/NORMATIVE.md` |
 

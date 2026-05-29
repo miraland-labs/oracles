@@ -44,7 +44,8 @@ Layer 3 — Informative (non-normative reference bindings & examples)
 | Profile id | Delivery model | Reason range | Reference maturity |
 |---|---|---|---|
 | `x402/oracles/onchain-transfer/v1` | JSON evidence + RPC verify | 256–319 | **Reference** (production) |
-| `x402/oracles/api-quality/v1` | JSON evidence (seller-attested) | TBD (448+) | Experimental |
+| `x402/oracles/rwa-transfer/v1` | Token-2022 RWA delivery + hook metadata | 448–479 | **Draft** (spec + planned `oracle-rwa-transfer`) |
+| `x402/oracles/api-quality/v1` | JSON evidence (seller-attested) | TBD (480+) | Experimental |
 | `x402/oracles/file-delivery/attestation/v1` | Raw blob streaming | 320–383 | Draft (streaming WIP) |
 
 New partners: start with `x402/profile-authoring/v1`.

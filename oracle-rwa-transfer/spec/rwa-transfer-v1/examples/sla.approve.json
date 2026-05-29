@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "profile_id": "x402/oracles/rwa-transfer/v1",
+  "payment_uid": "0000000000000000000000000000000000000000000000000000000000000000",
+  "cluster": "devnet",
+  "expected_transfers": [
+    {
+      "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+      "recipient_owner": "BuyerPubkey1111111111111111111111111111111",
+      "min_amount": "1000000",
+      "direction": "in"
+    }
+  ],
+  "deadline_unix": 1900000000
+}

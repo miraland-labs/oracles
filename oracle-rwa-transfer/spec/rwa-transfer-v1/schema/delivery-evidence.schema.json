@@ -1,0 +1,43 @@
+{
+  "title": "x402/oracles/rwa-transfer/v1 delivery evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "profile_id",
+    "tx_signature",
+    "asserted_transfers",
+    "submitted_at",
+    "payment_uid"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "profile_id": { "const": "x402/oracles/rwa-transfer/v1" },
+    "tx_signature": { "type": "string", "minLength": 64, "maxLength": 100 },
+    "asserted_transfers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mint", "recipient_owner", "claimed_delta"],
+        "properties": {
+          "mint": { "type": "string" },
+          "recipient_owner": { "type": "string" },
+          "claimed_delta": { "type": "string", "pattern": "^[0-9]+$" }
+        }
+      }
+    },
+    "submitted_at": { "type": "integer" },
+    "payment_uid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded 32-byte payment_uid echoed verbatim from the SLA the seller is fulfilling."
+    },
+    "buyer_nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "description": "Optional hex-encoded 32-byte buyer_nonce echoed from the SLA when present."
+    }
+  }
+}

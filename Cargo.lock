@@ -3636,6 +3636,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "oracle-rwa-transfer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "bs58",
+ "deadpool-postgres",
+ "dotenvy",
+ "hex",
+ "openssl",
+ "oracle-common",
+ "postgres-openssl",
+ "proptest",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sla-escrow-api",
+ "solana-client",
+ "solana-sdk",
+ "solana-transaction-status",
+ "solana-transaction-status-client-types",
+ "spl-associated-token-account 7.0.0",
+ "spl-token 4.0.2",
+ "spl-token-2022 6.0.0",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
