@@ -83,28 +83,42 @@ deltas, settles.
 
 ## Specification
 
-- [`spec/rwa-transfer-v1/NORMATIVE.md`](spec/rwa-transfer-v1/NORMATIVE.md)
+- **Authoritative normative spec:**
+  [`../../spec/rwa-transfer/v1/NORMATIVE.md`](../../spec/rwa-transfer/v1/NORMATIVE.md)
+  (the crate-local [`spec/rwa-transfer-v1/NORMATIVE.md`](spec/rwa-transfer-v1/NORMATIVE.md)
+  is a pointer to it).
 - [`spec/rwa-transfer-v1/schema/sla-document.schema.json`](spec/rwa-transfer-v1/schema/sla-document.schema.json)
 - [`spec/rwa-transfer-v1/schema/delivery-evidence.schema.json`](spec/rwa-transfer-v1/schema/delivery-evidence.schema.json)
 - [`spec/rwa-transfer-v1/examples/`](spec/rwa-transfer-v1/examples/) —
-  approve, mint-mismatch, amount-insufficient, deadline-exceeded.
+  `sla.approve`, `sla.amount-insufficient`, `sla.with-sender-binding`,
+  `delivery.approve`.
 
 ## Resolution-reason codes
 
-This binary emits codes in `[256, 263]` and `0` / `255`:
+This binary emits `0` (approved) plus the `rwa-transfer/v1` window `[448, 479]`
+(NORMATIVE §8). These differ from the sibling `oracle-onchain-transfer`
+(`256–319`); downstream consumers MUST switch on the numbers below.
 
-| Code        | Meaning                                |
-| ----------- | -------------------------------------- |
-| 0           | Approved                               |
-| 256         | TxNotFound                             |
-| 257         | TxFailed                               |
-| 258         | ClusterMismatch                        |
-| 259         | DeadlineExceeded                       |
-| 260         | MintMismatch                           |
-| 261         | RecipientMismatch                      |
-| 262         | AmountInsufficient                     |
-| 263         | DirectionMismatch                      |
-| 255         | Unspecified / generic failure          |
+| Code | Constant                          | Meaning                                   |
+| ---- | --------------------------------- | ----------------------------------------- |
+| 0    | —                                 | Approved                                  |
+| 448  | RwaTokenProgramMismatch           | Mint owner ≠ SLA `token_program`          |
+| 449  | RwaTransferHookMismatch           | Mint hook extension vs SLA mismatch       |
+| 450  | RwaTransferTxNotFound             | RPC has no tx for the signature           |
+| 451  | RwaTransferTxFailed               | `meta.err` set (includes hook revert)     |
+| 452  | RwaTransferAmountInsufficient     | Delta below `min_amount`                  |
+| 453  | RwaTransferMintMismatch           | No matching `(mint, owner)` balance row   |
+| 454  | RwaTransferDeadlineExceeded       | Past `deadline_unix`                      |
+| 455  | RwaTransferClusterMismatch        | SLA `cluster` ≠ oracle config             |
+| 456  | RwaTransferDirectionMismatch      | Wrong delta sign for `direction`          |
+| 457  | RwaTransferSenderMismatch         | `sender_owner` pin failed                 |
+| 458  | RwaTransferEvidencePredatesPayment| `block_time` < `Payment.created_at`       |
+| 459  | RwaTransferTxSignatureReused      | Replay across payments                    |
+| 460  | RwaTransferPaymentUidMismatch     | `payment_uid` binding failure             |
+| 461  | RwaTransferBuyerNonceMismatch     | `buyer_nonce` echo failure                |
+| 462  | RwaTransferBlockTimeMissing       | `block_time` absent when freshness/deadline required |
+| 463  | RwaTransferRecipientNotResolvable | Reserved (destination ATA never derived)  |
 
 These codes are stable across releases; downstream consumers may switch on
 the numeric reason.
+

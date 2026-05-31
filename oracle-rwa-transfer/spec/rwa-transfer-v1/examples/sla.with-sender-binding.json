@@ -4,6 +4,9 @@
   "payment_uid": "0000000000000000000000000000000000000000000000000000000000000001",
   "buyer_nonce": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
   "cluster": "mainnet-beta",
+  "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  "transfer_hook_program": "ky1Nv5ShhkJ9oxVfPSZmCGEHMXSE8ibkdKYFQC1woo6",
+  "offering_id": "pisces-series-a",
   "expected_transfers": [
     {
       "mint": "AetherVanePiscesMintAddressXXXXXXXXXXXXXXXX",

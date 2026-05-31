@@ -1,31 +1,41 @@
 //! `TransferEvaluator` for the rwa-transfer family.
 //!
-//! Verification flow (per design.md §Scenario (c) and Properties P-OT-1..P-OT-6):
+//! Verification flow (per NORMATIVE §7 and Properties P-OT-1..P-OT-6). All
+//! reason codes are from the `rwa-transfer/v1` window `[448, 479]`
+//! (`oracle_common::resolution_codes::rwa_transfer`) — distinct from the sibling
+//! `onchain-transfer` window `256–319`:
 //!
 //! 1. Cluster pinning — SLA `cluster` MUST equal the binary's configured cluster.
-//!    Mismatch → reject with `Custom(261)` (TransferClusterMismatch).
+//!    Mismatch → reject with `Custom(455)` (TransferClusterMismatch).
 //! 2. Fetch the tx via `getTransaction(tx_signature, jsonParsed)` against the
-//!    binary's RPC. Missing → `Custom(256)` (TransferTxNotFound). Failed
-//!    (`meta.err.is_some()`) → `Custom(257)` (TransferTxFailed).
+//!    binary's RPC. Missing → `Custom(450)` (TransferTxNotFound). Failed
+//!    (`meta.err.is_some()`) → `Custom(451)` (TransferTxFailed).
 //! 3. (Wave A §1.1) When `Payment.created_at` is known (`job.created_at > 0`):
-//!    - `meta.block_time` is mandatory; missing → `Custom(268)`
+//!    - `meta.block_time` is mandatory; missing → `Custom(462)`
 //!      (TransferBlockTimeMissing).
-//!    - `block_time` MUST be ≥ `created_at`; earlier → `Custom(264)`
+//!    - `block_time` MUST be ≥ `created_at`; earlier → `Custom(458)`
 //!      (TransferEvidencePredatesPayment). Prevents the seller replaying a
 //!      historical transfer that occurred before the buyer funded escrow.
-//! 4. (Optional) `deadline_unix` enforcement against `meta.block_time`. Late
-//!    → `Custom(260)` (TransferDeadlineExceeded).
+//! 4. (Optional) `deadline_unix` enforcement against `meta.block_time`. When a
+//!    deadline is set, `block_time` is mandatory (missing → `Custom(462)`); late
+//!    → `Custom(454)` (TransferDeadlineExceeded).
 //! 5. For each `ExpectedTransfer`:
 //!    - Find a `(mint, owner)` row in the post-token-balance list. Missing
-//!      → `Custom(259)` (TransferMintMismatch).
+//!      → `Custom(453)` (TransferMintMismatch).
 //!    - Find the matching pre-token-balance row (or treat absent pre as `0`,
 //!      which is the standard Solana semantic for newly-created ATAs).
 //!    - Compute `delta = post - pre` as `i128` (signed because either side may
 //!      be larger).
 //!    - Check the sign agrees with `direction` (`in` ⇒ delta > 0). Mismatch
-//!      → `Custom(263)` (TransferDirectionMismatch).
+//!      → `Custom(456)` (TransferDirectionMismatch).
 //!    - Compare `|delta|` against `min_amount`. Insufficient
-//!      → `Custom(258)` (TransferAmountInsufficient).
+//!      → `Custom(452)` (TransferAmountInsufficient).
+//!    - (Optional) `sender_owner` pin → `Custom(457)` (TransferSenderMismatch).
+//! 6. After the per-transfer battery approves, RWA-specific pins (NORMATIVE §7.2):
+//!    token-program owner pin → `Custom(448)` (RwaTokenProgramMismatch); Transfer
+//!    Hook program pin → `Custom(449)` (RwaTransferHookMismatch); applied to every
+//!    mint in `expected_transfers`. Then payment_uid (`460`) / buyer_nonce (`461`)
+//!    binding and cross-payment replay refusal (`459`).
 //!
 //! On approve, `resolution_reason` is `0` (P-VER-3). On reject, the reason is the
 //! standard or custom code corresponding to the **first** failing check
@@ -355,21 +365,28 @@ pub fn verify_observed_transfer(
         }
     }
 
-    // P-OT-6: deadline enforcement.
+    // P-OT-6: deadline enforcement. When the SLA sets a deadline, `block_time`
+    // is mandatory — otherwise a missing block_time would silently let a
+    // past-deadline transfer through. (Mirrors the freshness lower-bound logic
+    // above; closes the gap for legacy jobs where `payment_created_at` is None.)
     if let Some(deadline) = sla.deadline_unix {
-        if let Some(block_time) = observation.block_time {
-            if block_time > deadline {
+        match observation.block_time {
+            None => {
+                return reject(
+                    rwa_transfer::TRANSFER_BLOCK_TIME_MISSING,
+                    "deadline_unix",
+                    "RPC did not return a block_time but SLA sets deadline_unix; cannot verify the deadline",
+                );
+            }
+            Some(block_time) if block_time > deadline => {
                 return reject(
                     rwa_transfer::TRANSFER_DEADLINE_EXCEEDED,
                     "deadline_unix",
                     &format!("block_time {block_time} > deadline {deadline}"),
                 );
             }
+            Some(_) => {}
         }
-        // If `block_time` is missing we continue — the RPC will populate it for any
-        // confirmed transaction. The evaluator's worst case here is approving a
-        // transfer whose deadline check we couldn't verify; rare in practice and a
-        // future revision may upgrade this to a hard reject.
     }
 
     let mut checks: Vec<CheckResult> = Vec::with_capacity(sla.expected_transfers.len());
@@ -542,7 +559,16 @@ fn find_balance<'a>(
 }
 
 fn parse_amount_or_zero(s: &str) -> i128 {
-    s.parse::<i128>().unwrap_or(0)
+    match s.parse::<i128>() {
+        Ok(v) => v,
+        Err(e) => {
+            // RPC token amounts are always decimal integers; a parse failure
+            // indicates a malformed response. Treat as 0 (fail-safe: yields a
+            // spurious reject rather than a false approve) but log for diagnosis.
+            warn!(amount = %s, error = %e, "failed to parse token amount; treating as 0");
+            0
+        }
+    }
 }
 
 fn parse_min_amount(s: &str) -> Option<u128> {
@@ -651,34 +677,53 @@ async fn verify_rwa_mint_metadata(
     rpc: &std::sync::Arc<RpcClient>,
     sla: &TransferSla,
 ) -> Result<(), (u16, String)> {
-    let mint = sla.expected_transfers.first().ok_or((
-        rwa_transfer::TRANSFER_MINT_MISMATCH,
-        "expected_transfers is empty".into(),
-    ))?;
-    let mint_pk = Pubkey::from_str(&mint.mint).map_err(|e| {
-        (
+    if sla.expected_transfers.is_empty() {
+        return Err((
             rwa_transfer::TRANSFER_MINT_MISMATCH,
-            format!("invalid mint pubkey: {e}"),
-        )
-    })?;
+            "expected_transfers is empty".into(),
+        ));
+    }
+
     let expected_program = Pubkey::from_str(&sla.token_program).map_err(|e| {
         (
             rwa_transfer::RWA_TOKEN_PROGRAM_MISMATCH,
             format!("invalid token_program: {e}"),
         )
     })?;
-    let account = rpc.get_account(&mint_pk).await.map_err(|e| {
-        (
-            rwa_transfer::TRANSFER_MINT_MISMATCH,
-            format!("mint account fetch failed: {e}"),
-        )
-    })?;
-    verify_rwa_mint_from_account(
-        &account.owner,
-        &account.data,
-        &expected_program,
-        sla.transfer_hook_program.as_deref(),
-    )
+
+    // Pin the token program owner + Transfer Hook program for EVERY mint that
+    // appears in `expected_transfers`, not just the first. Each leg is an RWA
+    // delivery whose Token-2022 / hook configuration must match the SLA
+    // (NORMATIVE §7.2). Mints are de-duplicated so a multi-leg SLA over the same
+    // mint costs a single RPC round-trip.
+    let mut seen: Vec<&str> = Vec::with_capacity(sla.expected_transfers.len());
+    for expected in &sla.expected_transfers {
+        if seen.contains(&expected.mint.as_str()) {
+            continue;
+        }
+        seen.push(expected.mint.as_str());
+
+        let mint_pk = Pubkey::from_str(&expected.mint).map_err(|e| {
+            (
+                rwa_transfer::TRANSFER_MINT_MISMATCH,
+                format!("invalid mint pubkey {}: {e}", expected.mint),
+            )
+        })?;
+        let account = rpc.get_account(&mint_pk).await.map_err(|e| {
+            (
+                rwa_transfer::TRANSFER_MINT_MISMATCH,
+                format!("mint account fetch failed for {}: {e}", expected.mint),
+            )
+        })?;
+        verify_rwa_mint_from_account(
+            &account.owner,
+            &account.data,
+            &expected_program,
+            sla.transfer_hook_program.as_deref(),
+        )?;
+    }
+
+    Ok(())
 }
 
 /// Pure mint metadata checks: token program owner pin + Transfer Hook extension pin.
@@ -1031,6 +1076,20 @@ mod tests {
         );
         let r = verify_observed_transfer(&sla, &observation, None);
         assert!(r.approved);
+    }
+
+    #[test]
+    fn rejects_when_deadline_set_but_block_time_missing() {
+        // M2: a missing block_time must NOT silently pass the deadline gate.
+        let mut sla = sla_basic(TransferDirection::In, "1");
+        sla.deadline_unix = Some(1_700_000_000);
+        let observation = obs(false, None, vec![], vec![bal("MINT1", "OWNER1", "1")]);
+        let r = verify_observed_transfer(&sla, &observation, None);
+        assert!(!r.approved);
+        assert_eq!(
+            r.resolution_reason,
+            rwa_transfer::TRANSFER_BLOCK_TIME_MISSING
+        );
     }
 
     #[test]

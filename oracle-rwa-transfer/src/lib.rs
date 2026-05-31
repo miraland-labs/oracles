@@ -1,5 +1,8 @@
-//! `oracle-rwa-transfer` library. Hosts the SLA + evidence types and the evaluator
-//! impl for the `x402/oracles/rwa-transfer/v1` profile. Implementation lives in Tasks 14.1–14.3.
+//! `oracle-rwa-transfer` library. Hosts the SLA + evidence types and the
+//! `TransferEvaluator` for the `x402/oracles/rwa-transfer/v1` profile: it
+//! re-derives Token-2022 transfer deltas from `getTransaction(jsonParsed)`,
+//! pins the mint's token program and Transfer Hook program, and enforces the
+//! payment_uid / buyer_nonce bindings and cross-payment replay refusal.
 
 pub mod evaluator;
 pub mod evidence;

@@ -31,19 +31,39 @@ trap 'rm -f "$SLA_FILE" "$DELIVERY_FILE"' EXIT
 DEVNET_USDC_MINT="${DEVNET_USDC_MINT:-Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB}"
 BUYER_PUBKEY="${BUYER_PUBKEY:?set BUYER_PUBKEY}"
 TX_SIGNATURE="${TX_SIGNATURE:?set TX_SIGNATURE — the transfer signature the seller broadcast}"
+# Token-2022 program id the RWA mint must be owned by (required by the SLA).
+TOKEN_PROGRAM="${TOKEN_PROGRAM:-TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb}"
+# 32-byte payment uid (hex-64) bound at FundPayment; echoed in the evidence.
+PAYMENT_UID="${PAYMENT_UID:?set PAYMENT_UID — hex-64 payment_uid from the on-chain Payment}"
+# 32-byte buyer nonce (hex-64); echoed back in the delivery evidence.
+BUYER_NONCE="${BUYER_NONCE:?set BUYER_NONCE — hex-64 buyer nonce from the SLA}"
+# Optional issuer treasury wallet to pin the sender side (recommended for primary issuance).
+SENDER_OWNER="${SENDER_OWNER:-}"
 
-# Build SLA: expect at least 1_000_000 raw units of USDC INTO the buyer wallet.
+if [[ -n "$SENDER_OWNER" ]]; then
+  SENDER_LINE=",
+      \"sender_owner\": \"${SENDER_OWNER}\""
+else
+  SENDER_LINE=""
+fi
+
+# Build SLA: expect at least 1_000_000 raw units of the RWA mint INTO the buyer wallet.
+# profile_id / payment_uid / buyer_nonce / token_program are all REQUIRED by the
+# evaluator; the dispatcher routes on the exact profile_id string.
 cat > "$SLA_FILE" <<JSONEOF
 {
   "version": 1,
-  "profile_id": "x402/rwa-transfer/v1",
+  "profile_id": "x402/oracles/rwa-transfer/v1",
+  "payment_uid": "${PAYMENT_UID}",
+  "buyer_nonce": "${BUYER_NONCE}",
   "cluster": "${TRANSFER_CLUSTER}",
+  "token_program": "${TOKEN_PROGRAM}",
   "expected_transfers": [
     {
       "mint": "${DEVNET_USDC_MINT}",
       "recipient_owner": "${BUYER_PUBKEY}",
       "min_amount": "1000000",
-      "direction": "in"
+      "direction": "in"${SENDER_LINE}
     }
   ]
 }
@@ -52,8 +72,10 @@ JSONEOF
 cat > "$DELIVERY_FILE" <<JSONEOF
 {
   "version": 1,
-  "profile_id": "x402/rwa-transfer/v1",
+  "profile_id": "x402/oracles/rwa-transfer/v1",
   "tx_signature": "${TX_SIGNATURE}",
+  "payment_uid": "${PAYMENT_UID}",
+  "buyer_nonce": "${BUYER_NONCE}",
   "asserted_transfers": [
     {
       "mint": "${DEVNET_USDC_MINT}",
@@ -82,7 +104,7 @@ echo "DELIVERY_HASH=$DELIVERY_HASH"
 #    - approves iff delta >= min_amount with direction match
 # 5. Assertions:
 #    - oracle_jobs.status = 'settled'
-#    - oracle_verdicts.approved = true (or false with the reason in [256..263])
+#    - oracle_verdicts.approved = true (or false with the reason in [448..479])
 #
 # psql "$DATABASE_URL" -c "SELECT status, last_error, resolution_hash
 #                         FROM oracle_jobs WHERE delivery_hash = '$DELIVERY_HASH';"
@@ -94,7 +116,9 @@ echo "DELIVERY_HASH=$DELIVERY_HASH"
 #                         );"
 
 cat <<NOTE
-Runbook ready. Configure SELLER_TOKEN, PAYMENT_UID, BUYER_PUBKEY, and
-TX_SIGNATURE then walk through the numbered steps. The full integration
-test (Phase D Task 23) wraps this in a single command-line runner.
+Runbook ready. Configure BUYER_PUBKEY, TX_SIGNATURE, PAYMENT_UID, BUYER_NONCE
+(and optionally SENDER_OWNER / TOKEN_PROGRAM), then walk through the numbered
+steps. The SLA uses profile_id "x402/oracles/rwa-transfer/v1" and includes the
+required token_program + payment_uid fields so it dispatches and deserializes.
+The full integration test wraps this in a single command-line runner.
 NOTE

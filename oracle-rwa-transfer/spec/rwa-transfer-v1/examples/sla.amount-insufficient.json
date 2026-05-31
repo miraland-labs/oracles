@@ -3,6 +3,7 @@
   "profile_id": "x402/oracles/rwa-transfer/v1",
   "payment_uid": "0000000000000000000000000000000000000000000000000000000000000000",
   "cluster": "devnet",
+  "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
   "expected_transfers": [
     {
       "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",

@@ -3,11 +3,12 @@
 //! The wiring mirrors `oracle-api-quality::main`. The cluster the evaluator
 //! verifies against is read from `TRANSFER_CLUSTER` (one of `mainnet-beta`,
 //! `devnet`, `testnet`); any mismatch with the SLA `cluster` field is rejected
-//! with `Custom(261)` (TransferClusterMismatch).
+//! with `Custom(455)` (TransferClusterMismatch).
 //!
-//! NOTE: full pre/post-balance verification will arrive once Task 14.6 / 14.7 lands
-//! the mocked-RPC test harness; the binary currently boots a profile registry,
-//! starts the chain monitor + worker, and serves the registry HTTP routes.
+//! The binary boots a profile registry, starts the chain monitor + delivery
+//! backfill + evaluation worker, and serves the registry HTTP routes. The
+//! worker drives the full `TransferEvaluator` (RPC `getTransaction` →
+//! pre/post-balance delta re-derivation → token-program/hook pin → settle).
 
 use std::{
     collections::VecDeque,
@@ -164,7 +165,7 @@ async fn main() -> anyhow::Result<()> {
         ),
         // Pinned cluster so sellers / buyers / pr402 can sanity-check before
         // funding (otherwise a Devnet-vs-Mainnet mismatch surfaces only as
-        // a wasted on-chain settlement with `Custom(258) ClusterMismatch`).
+        // a wasted on-chain settlement with `Custom(455) RwaTransferClusterMismatch`).
         cluster: Some(
             match cluster {
                 TransferCluster::MainnetBeta => "mainnet-beta",
