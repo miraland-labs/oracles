@@ -1,6 +1,7 @@
 {
   "version": 1,
   "profile_id": "x402/oracles/file-delivery/attestation/v1",
+  "listing_id": "listing-reject-mime-mismatch",
   "expected_size_bytes_min": 1024,
   "expected_size_bytes_max": 1048576,
   "expected_mime": "image/png"

@@ -12,6 +12,12 @@ pub struct FileDeliverySla {
     /// on-chain `Payment` this SLA is bound to. Hashed into `Payment.sla_hash`
     /// so the SLA is cryptographically tied to one payment.
     pub payment_uid: String,
+    /// REQUIRED. The Forge listing id this delivery's SLA describes — the
+    /// path parameter the judge uses to reach Forge's seller-side verdict
+    /// endpoint (`GET {FORGE_VERDICT_BASE_URL}/api/v1/oracle/listings/{listing_id}/artifact`,
+    /// step 1 contract). The seller authors this alongside `payment_uid` since
+    /// they know which Forge listing the escrow payment is for.
+    pub listing_id: String,
     /// OPTIONAL (Wave B §1.4). Hex-encoded fresh random 32-byte buyer nonce.
     /// When set, the seller must echo it back in the companion evidence shape
     /// (a future-evidence-version requirement; the current attestation-only

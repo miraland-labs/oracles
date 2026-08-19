@@ -1,6 +1,7 @@
 {
   "version": 1,
   "profile_id": "x402/oracles/file-delivery/attestation/v1",
+  "listing_id": "listing-reject-undersized",
   "expected_size_bytes_min": 1000000,
   "expected_size_bytes_max": 5000000
 }

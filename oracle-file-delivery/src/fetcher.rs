@@ -7,8 +7,11 @@
 //!
 //! `GET {FORGE_VERDICT_BASE_URL}/api/v1/oracle/listings/{listing_id}/artifact`
 //!
-//! — authenticated with `payment_uid`, a `timestamp`, and an oracle Ed25519
-//! signature over those fields. The response stream is treated exactly like the
+//! — authenticated with the `X-Oracle-Payment-Uid`, `X-Oracle-Timestamp`, and
+//! `X-Oracle-Signature` request headers (never a query string — credentials in
+//! a query string end up in proxy/access logs and browser history) carrying
+//! `payment_uid`, a `timestamp`, and an oracle Ed25519 signature over those
+//! fields. The response stream is treated exactly like the
 //! payment door treats it: SHA-256 is computed incrementally over the raw bytes
 //! (never buffered in full) and compared against the digest the seller promised
 //! on-chain. A match is evidence for approval; a mismatch surfaces as
@@ -118,11 +121,9 @@ impl ForgeVerdictFetcher {
         let response = self
             .client
             .get(&url)
-            .query(&[
-                ("payment_uid", payment_uid),
-                ("timestamp", timestamp_str.as_str()),
-                ("signature", signature.as_str()),
-            ])
+            .header("X-Oracle-Payment-Uid", payment_uid)
+            .header("X-Oracle-Timestamp", timestamp_str.as_str())
+            .header("X-Oracle-Signature", signature.as_str())
             .send()
             .await
             .map_err(|e| {
@@ -175,7 +176,7 @@ impl ForgeVerdictFetcher {
 
 #[cfg(test)]
 mod tests {
-    use axum::{extract::Path, extract::Query, routing::get, Router};
+    use axum::{extract::Path, http::HeaderMap, routing::get, Router};
     use ed25519_dalek::{Verifier, VerifyingKey};
     use std::collections::HashMap;
     use tokio::sync::Mutex;
@@ -187,7 +188,9 @@ mod tests {
     }
 
     /// Spawn a mock verdict endpoint that returns `body` for any listing id,
-    /// and records the last request's query params and path for assertions.
+    /// and records the last request's auth headers and path for assertions.
+    /// No query string is ever inspected — per the step 1 contract, auth
+    /// travels in `X-Oracle-*` headers only.
     async fn spawn_verdict_server(
         body: Vec<u8>,
     ) -> (String, Arc<Mutex<Option<(String, HashMap<String, String>)>>>) {
@@ -198,10 +201,23 @@ mod tests {
         let seen_route = seen.clone();
         let app = Router::new().route(
             "/api/v1/oracle/listings/{listing_id}/artifact",
-            get(move |Path(listing_id): Path<String>, Query(params): Query<HashMap<String, String>>| {
+            get(move |Path(listing_id): Path<String>, headers: HeaderMap| {
                 let body = body.clone();
                 let seen_route = seen_route.clone();
                 async move {
+                    let mut params = HashMap::new();
+                    for key in [
+                        "x-oracle-payment-uid",
+                        "x-oracle-timestamp",
+                        "x-oracle-signature",
+                    ] {
+                        if let Some(v) = headers.get(key) {
+                            params.insert(
+                                key.trim_start_matches("x-oracle-").to_string(),
+                                v.to_str().unwrap().to_string(),
+                            );
+                        }
+                    }
                     *seen_route.lock().await = Some((listing_id, params));
                     body.as_ref().clone()
                 }
@@ -262,6 +278,55 @@ mod tests {
         let sig = ed25519_dalek::Signature::from_bytes(&sb);
         let vk: VerifyingKey = key.verifying_key();
         assert!(vk.verify(&message, &sig).is_ok());
+    }
+
+    #[tokio::test]
+    async fn auth_travels_in_headers_never_in_the_query_string() {
+        // Direct coverage for the step 1 contract's no-query-string-auth rule:
+        // a server that only inspects the raw request URI must see no query
+        // part at all, since credentials in a query string end up logged by
+        // proxies and CDNs.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen_query: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let seen_query_route = seen_query.clone();
+        let body = vec![0u8; 16];
+        let body = Arc::new(body);
+        let app = Router::new().route(
+            "/api/v1/oracle/listings/{listing_id}/artifact",
+            get(
+                move |Path(_listing_id): Path<String>, uri: axum::http::Uri| {
+                    let seen_query_route = seen_query_route.clone();
+                    let body = body.clone();
+                    async move {
+                        *seen_query_route.lock().await = uri.query().map(str::to_string);
+                        body.as_ref().clone()
+                    }
+                },
+            ),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let cfg = ForgeVerdictConfig {
+            verdict_base_url: format!("http://{addr}"),
+            oracle_signing_key: signing_key(),
+        };
+        let client = reqwest::Client::builder().build().unwrap();
+        let fetcher = ForgeVerdictFetcher::new(client, cfg);
+
+        // The digest won't match (we don't care about approve/reject here),
+        // only that the request that reached the server carried no query.
+        let _ = fetcher
+            .fetch_and_verify("listing-999", "payment-xyz", &[0u8; 32])
+            .await;
+
+        assert_eq!(
+            *seen_query.lock().await,
+            None,
+            "verdict request must not carry auth (or anything else) in the query string"
+        );
     }
 
     #[tokio::test]

@@ -1,14 +1,10 @@
 //! `oracle-file-delivery` binary entrypoint.
 //!
-//! NOTE: file-delivery dispatch reads SLA bytes via the JSON fetcher (the SLA is
-//! a small JSON document) but evidence is the blob bytes themselves. The current
-//! pipeline / `ProfileBinding` shape passes the same JSON fetcher for both; full
-//! streaming-fetch evidence wiring lands with Task 15.3 / 15.4.
-//!
-//! For now this binary boots a `FileDeliveryEvaluator` against the JSON evidence
-//! shape `FileDeliveryEvidence`, providing the chain monitor + worker + HTTP
-//! server scaffolding so integration tests (Task 15.9) can run end-to-end against
-//! a real MinIO container.
+//! Judge inspection for escrow preview deliveries goes through Forge's
+//! seller-side verdict path (`ForgeVerdictFetcher`, step 1 contract), not a
+//! registry-blob mirror acting as shop/CDN: the registry mirror is only used
+//! for the small SLA JSON document. See `oracle_file_delivery::runner` for
+//! the `ProfileRunner` that binds these together.
 
 use std::{
     collections::VecDeque,
@@ -18,13 +14,14 @@ use std::{
 
 use anyhow::Context;
 use deadpool_postgres::{Config as PgConfig, PoolConfig, Runtime};
+use ed25519_dalek::SigningKey;
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use oracle_common::{
     chain,
     config::OracleConfig,
     db::OracleDb,
     fetcher::{FetcherConfig, RegistryJsonFetcher},
-    profile::{ProfileBinding, ProfileRegistry, RegisteredProfile},
+    profile::{ProfileRegistry, RegisteredProfile},
     registry::{
         api::{registry_router, BackendKind, RegistryState},
         auth::ChallengeStore,
@@ -35,7 +32,10 @@ use oracle_common::{
     worker::run_worker,
 };
 use oracle_file_delivery::{
-    evaluator::FileDeliveryEvaluator, evidence::FileDeliveryEvidence, sla::FileDeliverySla,
+    evaluator::FileDeliveryEvaluator,
+    fetcher::{ForgeVerdictConfig, ForgeVerdictFetcher},
+    runner::ForgeVerdictProfileRunner,
+    sla::FileDeliverySla,
     PROFILE_ID,
 };
 use postgres_openssl::MakeTlsConnector;
@@ -85,21 +85,35 @@ async fn main() -> anyhow::Result<()> {
         max_retries: config.evidence_fetch_max_retries,
         retry_base: Duration::from_millis(config.evidence_fetch_retry_base_ms),
     });
+    // The SLA is a small JSON document, so it's still read off the registry
+    // mirror. It is NOT the shop/CDN for delivered files: that role belongs
+    // to Forge's seller-side verdict endpoint below.
     let sla_fetcher: Arc<RegistryJsonFetcher<FileDeliverySla>> =
         Arc::new(RegistryJsonFetcher::new(http.clone(), fetcher_cfg.clone()));
-    // Evidence in v1 is JSON-shaped (the streaming fetcher's outcome serialized as
-    // JSON). Future revisions will swap this for a true streaming `EvidenceFetcher`
-    // returning `FileDeliveryEvidence` directly from the blob bytes.
-    let evidence_fetcher: Arc<RegistryJsonFetcher<FileDeliveryEvidence>> =
-        Arc::new(RegistryJsonFetcher::new(http.clone(), fetcher_cfg.clone()));
+
+    // Delivered-file evidence for escrow preview listings comes from Forge's
+    // seller-side verdict path (step 1 ESCROW TWO DOORS contract), never from
+    // the registry blob. `ForgeVerdictConfig::from_env` fails closed if
+    // `FORGE_VERDICT_BASE_URL` is unset, so the judge can never silently fall
+    // back to any other evidence source. The oracle's Solana keypair is
+    // reused (as its 32-byte seed) to sign each verdict request per the step
+    // 1 contract.
+    let oracle_signing_key = Arc::new(SigningKey::from_bytes(
+        config.oracle_keypair.to_bytes()[..32]
+            .try_into()
+            .expect("solana Keypair::to_bytes() is 64 bytes; seed is the first 32"),
+    ));
+    let verdict_cfg = ForgeVerdictConfig::from_env(oracle_signing_key)
+        .context("loading FORGE_VERDICT_BASE_URL for the seller-side verdict fetcher")?;
+    let verdict_fetcher = Arc::new(ForgeVerdictFetcher::new(http.clone(), verdict_cfg));
 
     let mut profiles = ProfileRegistry::new();
     profiles.register(RegisteredProfile {
         profile_id: PROFILE_ID,
-        run: Arc::new(ProfileBinding {
+        run: Arc::new(ForgeVerdictProfileRunner {
             evaluator,
             sla_fetcher,
-            evidence_fetcher,
+            verdict_fetcher,
         }),
     });
 
