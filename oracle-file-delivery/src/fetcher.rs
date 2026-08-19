@@ -1,17 +1,27 @@
 //! `ForgeVerdictFetcher` — the file-delivery judge's evidence source on preview.
 //!
-//! Per the step 1 contract (the two-door design in `http402-forge-api`, merged
-//! PR #14), the oracle-side judge is the "verdict door": it does not host or
-//! mirror downloads itself. Instead it calls Forge's seller-side verdict
-//! endpoint —
+//! The oracle-side judge acts as a "verdict door": it does not host or mirror
+//! downloads itself. Instead it calls Forge's seller-side verdict endpoint —
 //!
 //! `GET {FORGE_VERDICT_BASE_URL}/api/v1/oracle/listings/{listing_id}/artifact`
 //!
 //! — authenticated with `payment_uid`, a `timestamp`, and an oracle Ed25519
-//! signature over those fields, carried as request headers (`X-Oracle-*`),
-//! never as query-string parameters — query strings are logged by
-//! intermediary proxies and CDNs, which would leak the signature. The
-//! response stream is treated exactly like the
+//! signature over those fields, carried as request headers rather than
+//! query-string parameters (query strings are logged by intermediary proxies
+//! and CDNs, which would leak the signature).
+//!
+//! NOTE ON PROVENANCE: the header names (`HEADER_PAYMENT_UID`,
+//! `HEADER_TIMESTAMP`, `HEADER_SIGNATURE`) and the signature domain
+//! (`VERDICT_SIGNATURE_DOMAIN`) below are this codebase's own choices, not a
+//! verbatim copy of Forge's externally published seller-side verdict
+//! contract — no in-repo spec documents that contract, and this environment
+//! could not reach Forge's published contract to source the exact field
+//! names and signature format from it. Do not treat these constants as
+//! confirmed to match what Forge actually expects; they must be reconciled
+//! against Forge's published contract before this fetcher is pointed at a
+//! real Forge deployment.
+//!
+//! The response stream is treated exactly like the
 //! payment door treats it: SHA-256 is computed incrementally over the raw bytes
 //! (never buffered in full) and compared against the digest the seller promised
 //! on-chain. A match is evidence for approval; a mismatch surfaces as
@@ -31,10 +41,11 @@ use crate::evidence::FileDeliveryEvidence;
 /// this purpose can never be replayed as a signature for another message shape.
 const VERDICT_SIGNATURE_DOMAIN: &[u8] = b"x402/forge/verdict/v1";
 
-/// Header names carrying the step 1 auth fields. Headers, not query-string
+/// Header names carrying the auth fields. Headers, not query-string
 /// parameters: query strings are routinely logged by reverse proxies, CDNs,
 /// and access logs, which would leak `payment_uid` and the oracle's signature
-/// to any system in the request path.
+/// to any system in the request path. UNCONFIRMED against Forge's published
+/// contract — see the provenance note at the top of this module.
 const HEADER_PAYMENT_UID: &str = "x-oracle-payment-uid";
 const HEADER_TIMESTAMP: &str = "x-oracle-timestamp";
 const HEADER_SIGNATURE: &str = "x-oracle-signature";
@@ -86,7 +97,8 @@ impl ForgeVerdictFetcher {
     }
 
     /// Sign `listing_id || payment_uid || timestamp` (domain-separated) with
-    /// the oracle's Ed25519 key per the step 1 contract. Returns the unix
+    /// the oracle's Ed25519 key using this module's own (unconfirmed) auth
+    /// shape — see the provenance note at the top of this module. Returns the unix
     /// timestamp used and the base58-encoded signature.
     fn sign_request(&self, listing_id: &str, payment_uid: &str) -> (u64, String) {
         let timestamp = SystemTime::now()
@@ -264,7 +276,7 @@ mod tests {
         assert_eq!(evidence.sniffed_mime.as_deref(), Some("image/png"));
         assert_eq!(evidence.blob_sha256_hex, hex::encode(hash));
 
-        // Confirm the judge hit the verdict endpoint per the step 1 contract:
+        // Confirm the judge hit the verdict endpoint using this module's auth shape:
         // correct path, auth fields present as headers, a verifiable oracle
         // signature, and — critically — no auth material leaked into the
         // query string.

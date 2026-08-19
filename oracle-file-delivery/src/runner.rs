@@ -5,10 +5,11 @@
 //! bytes from the registry-blob "shop/CDN" path via a generic
 //! `EvidenceFetcher<Output = _>`, this runner fetches delivered-file evidence
 //! for escrow *preview* listings straight from Forge's seller-side verdict
-//! endpoint ([`ForgeVerdictFetcher`]), authenticated per the step 1 ESCROW TWO
-//! DOORS contract. The SLA document itself is still a small JSON document
-//! read from the registry — only the delivered *file* evidence moves to the
-//! Forge verdict door.
+//! endpoint ([`ForgeVerdictFetcher`]). See the provenance note in
+//! `oracle_file_delivery::fetcher` regarding the auth header names and
+//! signature format used by that fetcher. The SLA document itself is still a
+//! small JSON document read from the registry — only the delivered *file*
+//! evidence moves to the Forge verdict door.
 
 use std::sync::Arc;
 
@@ -49,8 +50,7 @@ impl ProfileRunner for FileDeliveryProfileRunner {
         // The on-chain job carries no separate Forge `listing_id`; in the
         // escrow-preview scenario a payment is 1:1 with the listing it funds,
         // so `payment_uid` is the only per-job identifier available and is
-        // used for both the path segment and the auth field the step 1
-        // contract requires.
+        // used for both the path segment and the auth field.
         let payment_uid_hex = hex::encode(ctx.job.payment_uid);
         let evidence = self
             .verdict_fetcher
@@ -156,9 +156,8 @@ mod tests {
 
     /// Startup wiring + Forge auth/verdict flow, real approve: the SLA comes
     /// from the registry, the delivered file comes from Forge's seller-side
-    /// verdict endpoint, the oracle's Ed25519 signature over the step 1
-    /// contract's fields verifies, and the digest matches — the judge
-    /// approves.
+    /// verdict endpoint, the oracle's Ed25519 signature verifies, and the
+    /// digest matches — the judge approves.
     #[tokio::test]
     async fn approves_real_delivery_via_forge_verdict_path() {
         let mut file_body = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];

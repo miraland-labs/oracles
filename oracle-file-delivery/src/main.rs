@@ -4,11 +4,14 @@
 //! seller-side verdict path: the SLA is still a small JSON document read from
 //! the registry, but delivered-file evidence comes from
 //! [`oracle_file_delivery::fetcher::ForgeVerdictFetcher`] — never from the
-//! registry blob "shop/CDN" path. Authentication to Forge follows the step 1
-//! ESCROW TWO DOORS contract (oracle Ed25519 signature over
-//! `listing_id || payment_uid || timestamp`, carried as `X-Oracle-*` request
-//! headers — never as query-string parameters, so the signature and
-//! `payment_uid` are not exposed to proxy/CDN access logs). See
+//! registry blob "shop/CDN" path. Authentication to Forge is an oracle
+//! Ed25519 signature over `listing_id || payment_uid || timestamp`, carried
+//! as request headers rather than query-string parameters, so the signature
+//! and `payment_uid` are not exposed to proxy/CDN access logs. The exact
+//! header names and signature encoding used by [`ForgeVerdictFetcher`] are
+//! this codebase's own choice and have not been reconciled against Forge's
+//! externally published seller-side verdict contract — see the provenance
+//! note in `oracle_file_delivery::fetcher`. See
 //! [`oracle_file_delivery::runner::FileDeliveryProfileRunner`] for the wiring.
 
 use std::{
@@ -94,10 +97,10 @@ async fn main() -> anyhow::Result<()> {
     let sla_fetcher: Arc<RegistryJsonFetcher<FileDeliverySla>> =
         Arc::new(RegistryJsonFetcher::new(http.clone(), fetcher_cfg.clone()));
 
-    // Delivered-file evidence comes from Forge's seller-side verdict path
-    // (step 1 ESCROW TWO DOORS contract), never from the registry blob
-    // "shop/CDN" path. `FORGE_VERDICT_BASE_URL` is required — the judge does
-    // not fall back to any other evidence source.
+    // Delivered-file evidence comes from Forge's seller-side verdict path,
+    // never from the registry blob "shop/CDN" path. `FORGE_VERDICT_BASE_URL`
+    // is required — the judge does not fall back to any other evidence
+    // source.
     let oracle_secret_seed: [u8; 32] = config.oracle_keypair.to_bytes()[..32]
         .try_into()
         .context("oracle keypair secret seed must be 32 bytes")?;
