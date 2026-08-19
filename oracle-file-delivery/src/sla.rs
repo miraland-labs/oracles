@@ -8,6 +8,12 @@ use crate::PROFILE_ID;
 pub struct FileDeliverySla {
     pub version: u32,
     pub profile_id: String,
+    /// REQUIRED. The Forge listing identity (UUID) this delivery is judged
+    /// against, exactly as Forge publishes it (`ListingPublic.id` /
+    /// `AGENT_API.md` "Stable product ID"). Carried in the pinned
+    /// `http402-forge-api` verdict door's `{listing_id}` path segment and
+    /// signed message — never derived from or replaced by `payment_uid`.
+    pub listing_id: String,
     /// REQUIRED (Wave B §1.2). Hex-encoded 32-byte `payment_uid` from the
     /// on-chain `Payment` this SLA is bound to. Hashed into `Payment.sla_hash`
     /// so the SLA is cryptographically tied to one payment.

@@ -46,15 +46,16 @@ impl ProfileRunner for FileDeliveryProfileRunner {
             .fetch(&ctx.job.sla_hash, ArtifactKind::Sla)
             .await?;
 
-        // The on-chain job carries no separate Forge `listing_id`; in the
-        // escrow-preview scenario a payment is 1:1 with the listing it funds,
-        // so `payment_uid` is the only per-job identifier available and is
-        // used for both the path segment and the auth field the step 1
-        // contract requires.
+        // The Forge listing identity comes from the SLA the seller published
+        // for this delivery (`sla.listing_id`) — Forge's own listing UUID,
+        // never the on-chain `payment_uid`. The step 1 contract binds the
+        // verdict door to `(listing_id, payment_uid)` as two distinct
+        // fields; sending `payment_uid` in place of `listing_id` would not
+        // match Forge's escrow fund bind row.
         let payment_uid_hex = hex::encode(ctx.job.payment_uid);
         let evidence = self
             .verdict_fetcher
-            .fetch_and_verify(&payment_uid_hex, &payment_uid_hex, &ctx.job.delivery_hash)
+            .fetch_and_verify(&sla.listing_id, &payment_uid_hex, &ctx.job.delivery_hash)
             .await?;
 
         let result = OracleEvaluator::evaluate(&*self.evaluator, ctx, &sla, &evidence).await?;
@@ -170,6 +171,7 @@ mod tests {
         let sla = FileDeliverySla {
             version: 1,
             profile_id: PROFILE_ID.into(),
+            listing_id: "550e8400-e29b-41d4-a716-446655440000".into(),
             payment_uid: "aa".repeat(32),
             buyer_nonce: None,
             expected_size_bytes_min: 1,
@@ -225,8 +227,11 @@ mod tests {
 
         // Confirm the delivered-file evidence really came from the Forge
         // verdict endpoint (not a registry blob route): the mock verdict
-        // server recorded the request.
-        assert!(seen.lock().await.is_some());
+        // server recorded the request — and that it carried the SLA's
+        // Forge listing identity, not the payment_uid, as the path segment.
+        let seen_listing_id = seen.lock().await.clone().unwrap();
+        assert_eq!(seen_listing_id, "550e8400-e29b-41d4-a716-446655440000");
+        assert_ne!(seen_listing_id, hex::encode(payment_uid));
     }
 
     /// Deliberate reject: the verdict endpoint returns a file whose bytes
@@ -237,6 +242,7 @@ mod tests {
         let sla = FileDeliverySla {
             version: 1,
             profile_id: PROFILE_ID.into(),
+            listing_id: "660e8400-e29b-41d4-a716-446655440001".into(),
             payment_uid: "bb".repeat(32),
             buyer_nonce: None,
             expected_size_bytes_min: 1,
