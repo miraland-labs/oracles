@@ -76,9 +76,7 @@ impl ProfileRunner for FileDeliveryProfileRunner {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use axum::{extract::Path, extract::Query, routing::get, Router};
+    use axum::{extract::Path, routing::get, Router};
     use ed25519_dalek::SigningKey;
     use oracle_common::fetcher::FetcherConfig;
     use sha2::{Digest, Sha256};
@@ -109,21 +107,19 @@ mod tests {
         format!("http://{addr}")
     }
 
-    async fn spawn_verdict_server(
-        body: Vec<u8>,
-    ) -> (String, Arc<Mutex<Option<(String, HashMap<String, String>)>>>) {
+    async fn spawn_verdict_server(body: Vec<u8>) -> (String, Arc<Mutex<Option<String>>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let body = Arc::new(body);
-        let seen: Arc<Mutex<Option<(String, HashMap<String, String>)>>> = Arc::new(Mutex::new(None));
+        let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let seen_route = seen.clone();
         let app = Router::new().route(
             "/api/v1/oracle/listings/{listing_id}/artifact",
-            get(move |Path(listing_id): Path<String>, Query(params): Query<HashMap<String, String>>| {
+            get(move |Path(listing_id): Path<String>| {
                 let body = body.clone();
                 let seen_route = seen_route.clone();
                 async move {
-                    *seen_route.lock().await = Some((listing_id, params));
+                    *seen_route.lock().await = Some(listing_id);
                     body.as_ref().clone()
                 }
             }),

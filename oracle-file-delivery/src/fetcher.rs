@@ -8,7 +8,10 @@
 //! `GET {FORGE_VERDICT_BASE_URL}/api/v1/oracle/listings/{listing_id}/artifact`
 //!
 //! — authenticated with `payment_uid`, a `timestamp`, and an oracle Ed25519
-//! signature over those fields. The response stream is treated exactly like the
+//! signature over those fields, carried as request headers (`X-Oracle-*`),
+//! never as query-string parameters — query strings are logged by
+//! intermediary proxies and CDNs, which would leak the signature. The
+//! response stream is treated exactly like the
 //! payment door treats it: SHA-256 is computed incrementally over the raw bytes
 //! (never buffered in full) and compared against the digest the seller promised
 //! on-chain. A match is evidence for approval; a mismatch surfaces as
@@ -27,6 +30,14 @@ use crate::evidence::FileDeliveryEvidence;
 /// Domain separator for the verdict-request signature, so a signature made for
 /// this purpose can never be replayed as a signature for another message shape.
 const VERDICT_SIGNATURE_DOMAIN: &[u8] = b"x402/forge/verdict/v1";
+
+/// Header names carrying the step 1 auth fields. Headers, not query-string
+/// parameters: query strings are routinely logged by reverse proxies, CDNs,
+/// and access logs, which would leak `payment_uid` and the oracle's signature
+/// to any system in the request path.
+const HEADER_PAYMENT_UID: &str = "x-oracle-payment-uid";
+const HEADER_TIMESTAMP: &str = "x-oracle-timestamp";
+const HEADER_SIGNATURE: &str = "x-oracle-signature";
 
 /// 512-byte MIME-sniff window — enough for `infer` to identify common formats,
 /// matching the payment door's sniffing behaviour.
@@ -118,11 +129,9 @@ impl ForgeVerdictFetcher {
         let response = self
             .client
             .get(&url)
-            .query(&[
-                ("payment_uid", payment_uid),
-                ("timestamp", timestamp_str.as_str()),
-                ("signature", signature.as_str()),
-            ])
+            .header(HEADER_PAYMENT_UID, payment_uid)
+            .header(HEADER_TIMESTAMP, timestamp_str.as_str())
+            .header(HEADER_SIGNATURE, signature.as_str())
             .send()
             .await
             .map_err(|e| {
@@ -175,37 +184,53 @@ impl ForgeVerdictFetcher {
 
 #[cfg(test)]
 mod tests {
-    use axum::{extract::Path, extract::Query, routing::get, Router};
+    use axum::{extract::Path, http::HeaderMap, http::Uri, routing::get, Router};
     use ed25519_dalek::{Verifier, VerifyingKey};
-    use std::collections::HashMap;
     use tokio::sync::Mutex;
 
     use super::*;
+
+    /// What the mock verdict server observed for the last request: the path
+    /// segment, the raw request headers, and the original URI (so tests can
+    /// positively assert the query string carries no auth material).
+    #[derive(Clone)]
+    struct SeenRequest {
+        listing_id: String,
+        headers: HeaderMap,
+        raw_query: Option<String>,
+    }
 
     fn signing_key() -> Arc<SigningKey> {
         Arc::new(SigningKey::from_bytes(&[7u8; 32]))
     }
 
     /// Spawn a mock verdict endpoint that returns `body` for any listing id,
-    /// and records the last request's query params and path for assertions.
+    /// and records the last request's headers, path, and raw query string for
+    /// assertions.
     async fn spawn_verdict_server(
         body: Vec<u8>,
-    ) -> (String, Arc<Mutex<Option<(String, HashMap<String, String>)>>>) {
+    ) -> (String, Arc<Mutex<Option<SeenRequest>>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let body = Arc::new(body);
-        let seen: Arc<Mutex<Option<(String, HashMap<String, String>)>>> = Arc::new(Mutex::new(None));
+        let seen: Arc<Mutex<Option<SeenRequest>>> = Arc::new(Mutex::new(None));
         let seen_route = seen.clone();
         let app = Router::new().route(
             "/api/v1/oracle/listings/{listing_id}/artifact",
-            get(move |Path(listing_id): Path<String>, Query(params): Query<HashMap<String, String>>| {
-                let body = body.clone();
-                let seen_route = seen_route.clone();
-                async move {
-                    *seen_route.lock().await = Some((listing_id, params));
-                    body.as_ref().clone()
-                }
-            }),
+            get(
+                move |Path(listing_id): Path<String>, uri: Uri, headers: HeaderMap| {
+                    let body = body.clone();
+                    let seen_route = seen_route.clone();
+                    async move {
+                        *seen_route.lock().await = Some(SeenRequest {
+                            listing_id,
+                            headers,
+                            raw_query: uri.query().map(|q| q.to_string()),
+                        });
+                        body.as_ref().clone()
+                    }
+                },
+            ),
         );
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -240,12 +265,34 @@ mod tests {
         assert_eq!(evidence.blob_sha256_hex, hex::encode(hash));
 
         // Confirm the judge hit the verdict endpoint per the step 1 contract:
-        // correct path, payment_uid present, and a verifiable oracle signature.
-        let (listing_id, params) = seen.lock().await.clone().unwrap();
-        assert_eq!(listing_id, "listing-123");
-        assert_eq!(params.get("payment_uid").unwrap(), "payment-abc");
-        let timestamp = params.get("timestamp").unwrap();
-        let signature_b58 = params.get("signature").unwrap();
+        // correct path, auth fields present as headers, a verifiable oracle
+        // signature, and — critically — no auth material leaked into the
+        // query string.
+        let seen = seen.lock().await.clone().unwrap();
+        assert_eq!(seen.listing_id, "listing-123");
+        assert!(
+            seen.raw_query.is_none(),
+            "auth must not be carried in the query string, got: {:?}",
+            seen.raw_query
+        );
+        assert_eq!(
+            seen.headers.get(HEADER_PAYMENT_UID).unwrap(),
+            "payment-abc"
+        );
+        let timestamp = seen
+            .headers
+            .get(HEADER_TIMESTAMP)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let signature_b58 = seen
+            .headers
+            .get(HEADER_SIGNATURE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let mut message = Vec::new();
         message.extend_from_slice(VERDICT_SIGNATURE_DOMAIN);

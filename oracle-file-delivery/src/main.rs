@@ -6,7 +6,9 @@
 //! [`oracle_file_delivery::fetcher::ForgeVerdictFetcher`] — never from the
 //! registry blob "shop/CDN" path. Authentication to Forge follows the step 1
 //! ESCROW TWO DOORS contract (oracle Ed25519 signature over
-//! `listing_id || payment_uid || timestamp`). See
+//! `listing_id || payment_uid || timestamp`, carried as `X-Oracle-*` request
+//! headers — never as query-string parameters, so the signature and
+//! `payment_uid` are not exposed to proxy/CDN access logs). See
 //! [`oracle_file_delivery::runner::FileDeliveryProfileRunner`] for the wiring.
 
 use std::{
