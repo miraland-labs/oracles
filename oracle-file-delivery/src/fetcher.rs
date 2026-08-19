@@ -180,6 +180,45 @@ impl ForgeVerdictFetcher {
             blob_sha256_hex: computed_hex,
         })
     }
+
+    /// Announce this judge to Forge as the running step 1 oracle by
+    /// executing one request against the exact same verdict endpoint, header
+    /// names, and Ed25519 signature scheme used for real deliveries
+    /// (`fetch_and_verify`), so Forge's access logs record a request signed
+    /// by this judge's already-published operator key. The oracle's own
+    /// base58-encoded pubkey is used as the identifying `listing_id` /
+    /// `payment_uid` fields — no new endpoint, header, or signature format is
+    /// introduced; only the values carried in the existing fields differ
+    /// from a real job. The response is not evidence and is never evaluated
+    /// for approval: this call exists purely so the judge announces itself
+    /// on startup, before any real verdict traffic depends on the handshake
+    /// being wired correctly.
+    pub async fn announce_to_forge(&self) -> Result<u16, OracleError> {
+        let oracle_id =
+            bs58::encode(self.cfg.oracle_signing_key.verifying_key().to_bytes()).into_string();
+        let (timestamp, signature) = self.sign_request(&oracle_id, &oracle_id);
+        let timestamp_str = timestamp.to_string();
+
+        let url = format!(
+            "{}/api/v1/oracle/listings/{listing_id}/artifact",
+            self.cfg.verdict_base_url.trim_end_matches('/'),
+            listing_id = oracle_id
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header(HEADER_PAYMENT_UID, oracle_id.as_str())
+            .header(HEADER_TIMESTAMP, timestamp_str.as_str())
+            .header(HEADER_SIGNATURE, signature.as_str())
+            .send()
+            .await
+            .map_err(|e| {
+                OracleError::EvidenceNotFound(format!("Forge announcement transport: {e}"))
+            })?;
+
+        Ok(response.status().as_u16())
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +339,72 @@ mod tests {
         message.extend_from_slice(b"listing-123");
         message.push(0);
         message.extend_from_slice(b"payment-abc");
+        message.push(0);
+        message.extend_from_slice(timestamp.as_bytes());
+
+        let sig_bytes = bs58::decode(signature_b58).into_vec().unwrap();
+        let mut sb = [0u8; 64];
+        sb.copy_from_slice(&sig_bytes);
+        let sig = ed25519_dalek::Signature::from_bytes(&sb);
+        let vk: VerifyingKey = key.verifying_key();
+        assert!(vk.verify(&message, &sig).is_ok());
+    }
+
+    #[tokio::test]
+    async fn announce_to_forge_uses_the_same_endpoint_headers_and_signature_as_verdict_fetch() {
+        let (base_url, seen) = spawn_verdict_server(vec![]).await;
+        let key = signing_key();
+        let cfg = ForgeVerdictConfig {
+            verdict_base_url: base_url,
+            oracle_signing_key: key.clone(),
+        };
+        let client = reqwest::Client::builder().build().unwrap();
+        let fetcher = ForgeVerdictFetcher::new(client, cfg);
+
+        let expected_oracle_id = bs58::encode(key.verifying_key().to_bytes()).into_string();
+
+        let status = fetcher.announce_to_forge().await.unwrap();
+        assert_eq!(status, 200);
+
+        let seen = seen.lock().await.clone().unwrap();
+        // Same path shape as `fetch_and_verify`
+        // (`/api/v1/oracle/listings/{listing_id}/artifact`), identified by
+        // the oracle's own pubkey rather than a real listing id.
+        assert_eq!(seen.listing_id, expected_oracle_id);
+        assert!(
+            seen.raw_query.is_none(),
+            "announcement must not carry auth in the query string, got: {:?}",
+            seen.raw_query
+        );
+
+        // Same three header names as the verdict-fetch handshake — no new
+        // headers introduced.
+        assert_eq!(
+            seen.headers.get(HEADER_PAYMENT_UID).unwrap(),
+            expected_oracle_id.as_str()
+        );
+        let timestamp = seen
+            .headers
+            .get(HEADER_TIMESTAMP)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let signature_b58 = seen
+            .headers
+            .get(HEADER_SIGNATURE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // Same domain-separated Ed25519 signature scheme as `fetch_and_verify`.
+        let mut message = Vec::new();
+        message.extend_from_slice(VERDICT_SIGNATURE_DOMAIN);
+        message.push(0);
+        message.extend_from_slice(expected_oracle_id.as_bytes());
+        message.push(0);
+        message.extend_from_slice(expected_oracle_id.as_bytes());
         message.push(0);
         message.extend_from_slice(timestamp.as_bytes());
 

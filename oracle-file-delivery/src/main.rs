@@ -106,6 +106,22 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Forge verdict fetcher config: {e}"))?;
     let verdict_fetcher = Arc::new(ForgeVerdictFetcher::new(http.clone(), verdict_cfg));
 
+    // Announce this judge to Forge as the already-published step 1 oracle by
+    // executing the same verdict-endpoint handshake used for real deliveries
+    // once at startup, so Forge's access logs record this process's signed
+    // identity before any real verdict traffic depends on it. Spawned and
+    // logged rather than awaited inline: a preview Forge host being
+    // temporarily unreachable must not block this judge from starting.
+    {
+        let announce_fetcher = verdict_fetcher.clone();
+        tokio::spawn(async move {
+            match announce_fetcher.announce_to_forge().await {
+                Ok(status) => info!(status, "announced file-delivery judge to Forge"),
+                Err(e) => tracing::warn!(error = %e, "failed to announce file-delivery judge to Forge"),
+            }
+        });
+    }
+
     let mut profiles = ProfileRegistry::new();
     profiles.register(RegisteredProfile {
         profile_id: PROFILE_ID,
