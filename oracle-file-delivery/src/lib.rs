@@ -5,6 +5,7 @@
 pub mod evaluator;
 pub mod evidence;
 pub mod fetcher;
+pub mod runner;
 pub mod sla;
 
 /// Canonical profile identifier this binary registers under.
