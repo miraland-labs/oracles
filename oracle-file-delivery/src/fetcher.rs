@@ -1,19 +1,23 @@
 //! `ForgeVerdictFetcher` — the file-delivery judge's evidence source on preview.
 //!
-//! Per the step 1 contract (the two-door design in `http402-forge-api`, merged
-//! PR #14), the oracle-side judge is the "verdict door": it does not host or
-//! mirror downloads itself. Instead it calls Forge's seller-side verdict
-//! endpoint —
+//! The oracle-side judge is Forge's already-published step-1 oracle: the
+//! "verdict door" documented in the pinned `http402-forge-api` contract
+//! (`docs/AGENT_API.md` "Oracle verdict (escrow only)" and
+//! `docs/ESCROW_TWO_DOORS.md` §4 "Binding"). It does not host or mirror
+//! downloads itself. Instead it calls Forge's seller-side verdict endpoint —
 //!
 //! `GET {FORGE_VERDICT_BASE_URL}/api/v1/oracle/listings/{listing_id}/artifact`
 //!
-//! — authenticated with `payment_uid`, a `timestamp`, and an oracle Ed25519
-//! signature over those fields. The response stream is treated exactly like the
-//! payment door treats it: SHA-256 is computed incrementally over the raw bytes
-//! (never buffered in full) and compared against the digest the seller promised
-//! on-chain. A match is evidence for approval; a mismatch surfaces as
-//! `OracleError::EvidenceNotFound` so the judge rejects — it never partially
-//! approves or serves the bytes onward.
+//! — authenticated with the exact headers and signed-message format Forge
+//! publishes for that route: `X-Forge-Payment-Uid`, `X-Forge-Oracle-Ts`, and
+//! `X-Forge-Oracle-Sig` (base58 Ed25519) over the UTF-8 message
+//! `forge-oracle-v1|{listing_id}|{payment_uid_hex}|{ts}|{host}`. The response
+//! stream is treated exactly like the payment door treats it: SHA-256 is
+//! computed incrementally over the raw bytes (never buffered in full) and
+//! compared against the digest the seller promised on-chain. A match is
+//! evidence for approval; a mismatch surfaces as `OracleError::EvidenceNotFound`
+//! so the judge rejects — it never partially approves or serves the bytes
+//! onward.
 
 use std::{sync::Arc, time::SystemTime};
 
@@ -24,9 +28,11 @@ use sha2::{Digest, Sha256};
 
 use crate::evidence::FileDeliveryEvidence;
 
-/// Domain separator for the verdict-request signature, so a signature made for
-/// this purpose can never be replayed as a signature for another message shape.
-const VERDICT_SIGNATURE_DOMAIN: &[u8] = b"x402/forge/verdict/v1";
+/// Header names carrying the step-1 auth fields, verbatim from the pinned
+/// `http402-forge-api` contract (`docs/AGENT_API.md`, `docs/openapi.yaml`).
+const HEADER_PAYMENT_UID: &str = "X-Forge-Payment-Uid";
+const HEADER_ORACLE_TS: &str = "X-Forge-Oracle-Ts";
+const HEADER_ORACLE_SIG: &str = "X-Forge-Oracle-Sig";
 
 /// 512-byte MIME-sniff window — enough for `infer` to identify common formats,
 /// matching the payment door's sniffing behaviour.
@@ -74,25 +80,19 @@ impl ForgeVerdictFetcher {
         Self { client, cfg }
     }
 
-    /// Sign `listing_id || payment_uid || timestamp` (domain-separated) with
-    /// the oracle's Ed25519 key per the step 1 contract. Returns the unix
-    /// timestamp used and the base58-encoded signature.
-    fn sign_request(&self, listing_id: &str, payment_uid: &str) -> (u64, String) {
+    /// Sign `forge-oracle-v1|{listing_id}|{payment_uid_hex}|{ts}|{host}` with
+    /// the oracle's Ed25519 key, exactly as published in the pinned
+    /// `http402-forge-api` contract (`docs/ESCROW_TWO_DOORS.md` §4). Returns
+    /// the unix timestamp used and the base58-encoded signature.
+    fn sign_request(&self, listing_id: &str, payment_uid: &str, host: &str) -> (u64, String) {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        let mut message = Vec::new();
-        message.extend_from_slice(VERDICT_SIGNATURE_DOMAIN);
-        message.push(0);
-        message.extend_from_slice(listing_id.as_bytes());
-        message.push(0);
-        message.extend_from_slice(payment_uid.as_bytes());
-        message.push(0);
-        message.extend_from_slice(timestamp.to_string().as_bytes());
+        let message = format!("forge-oracle-v1|{listing_id}|{payment_uid}|{timestamp}|{host}");
 
-        let signature = self.cfg.oracle_signing_key.sign(&message);
+        let signature = self.cfg.oracle_signing_key.sign(message.as_bytes());
         (timestamp, bs58::encode(signature.to_bytes()).into_string())
     }
 
@@ -107,22 +107,31 @@ impl ForgeVerdictFetcher {
         payment_uid: &str,
         promised_sha256: &[u8; 32],
     ) -> Result<FileDeliveryEvidence, OracleError> {
-        let (timestamp, signature) = self.sign_request(listing_id, payment_uid);
-        let timestamp_str = timestamp.to_string();
-
         let url = format!(
             "{}/api/v1/oracle/listings/{listing_id}/artifact",
             self.cfg.verdict_base_url.trim_end_matches('/')
         );
 
+        let parsed_url = reqwest::Url::parse(&url).map_err(|e| {
+            OracleError::EvidenceNotFound(format!("invalid verdict base url {url}: {e}"))
+        })?;
+        let host = parsed_url.host_str().ok_or_else(|| {
+            OracleError::EvidenceNotFound(format!("verdict base url {url} has no host"))
+        })?;
+        let host = match parsed_url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        };
+
+        let (timestamp, signature) = self.sign_request(listing_id, payment_uid, &host);
+        let timestamp_str = timestamp.to_string();
+
         let response = self
             .client
             .get(&url)
-            .query(&[
-                ("payment_uid", payment_uid),
-                ("timestamp", timestamp_str.as_str()),
-                ("signature", signature.as_str()),
-            ])
+            .header(HEADER_PAYMENT_UID, payment_uid)
+            .header(HEADER_ORACLE_TS, timestamp_str.as_str())
+            .header(HEADER_ORACLE_SIG, signature.as_str())
             .send()
             .await
             .map_err(|e| {
@@ -175,37 +184,53 @@ impl ForgeVerdictFetcher {
 
 #[cfg(test)]
 mod tests {
-    use axum::{extract::Path, extract::Query, routing::get, Router};
+    use axum::{extract::Path, http::HeaderMap, http::Uri, routing::get, Router};
     use ed25519_dalek::{Verifier, VerifyingKey};
-    use std::collections::HashMap;
     use tokio::sync::Mutex;
 
     use super::*;
+
+    /// What the mock verdict server observed for the last request: the path
+    /// segment, the raw request headers, and the original URI (so tests can
+    /// positively assert the query string carries no auth material).
+    #[derive(Clone)]
+    struct SeenRequest {
+        listing_id: String,
+        headers: HeaderMap,
+        raw_query: Option<String>,
+    }
 
     fn signing_key() -> Arc<SigningKey> {
         Arc::new(SigningKey::from_bytes(&[7u8; 32]))
     }
 
     /// Spawn a mock verdict endpoint that returns `body` for any listing id,
-    /// and records the last request's query params and path for assertions.
+    /// and records the last request's headers, path, and raw query string for
+    /// assertions.
     async fn spawn_verdict_server(
         body: Vec<u8>,
-    ) -> (String, Arc<Mutex<Option<(String, HashMap<String, String>)>>>) {
+    ) -> (String, Arc<Mutex<Option<SeenRequest>>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let body = Arc::new(body);
-        let seen: Arc<Mutex<Option<(String, HashMap<String, String>)>>> = Arc::new(Mutex::new(None));
+        let seen: Arc<Mutex<Option<SeenRequest>>> = Arc::new(Mutex::new(None));
         let seen_route = seen.clone();
         let app = Router::new().route(
             "/api/v1/oracle/listings/{listing_id}/artifact",
-            get(move |Path(listing_id): Path<String>, Query(params): Query<HashMap<String, String>>| {
-                let body = body.clone();
-                let seen_route = seen_route.clone();
-                async move {
-                    *seen_route.lock().await = Some((listing_id, params));
-                    body.as_ref().clone()
-                }
-            }),
+            get(
+                move |Path(listing_id): Path<String>, uri: Uri, headers: HeaderMap| {
+                    let body = body.clone();
+                    let seen_route = seen_route.clone();
+                    async move {
+                        *seen_route.lock().await = Some(SeenRequest {
+                            listing_id,
+                            headers,
+                            raw_query: uri.query().map(|q| q.to_string()),
+                        });
+                        body.as_ref().clone()
+                    }
+                },
+            ),
         );
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -222,6 +247,7 @@ mod tests {
         hash.copy_from_slice(&digest);
 
         let (base_url, seen) = spawn_verdict_server(body.clone()).await;
+        let base_url_for_message = base_url.clone();
         let key = signing_key();
         let cfg = ForgeVerdictConfig {
             verdict_base_url: base_url,
@@ -240,28 +266,48 @@ mod tests {
         assert_eq!(evidence.blob_sha256_hex, hex::encode(hash));
 
         // Confirm the judge hit the verdict endpoint per the step 1 contract:
-        // correct path, payment_uid present, and a verifiable oracle signature.
-        let (listing_id, params) = seen.lock().await.clone().unwrap();
-        assert_eq!(listing_id, "listing-123");
-        assert_eq!(params.get("payment_uid").unwrap(), "payment-abc");
-        let timestamp = params.get("timestamp").unwrap();
-        let signature_b58 = params.get("signature").unwrap();
+        // correct path, auth fields present as headers, a verifiable oracle
+        // signature, and — critically — no auth material leaked into the
+        // query string.
+        let seen = seen.lock().await.clone().unwrap();
+        assert_eq!(seen.listing_id, "listing-123");
+        assert!(
+            seen.raw_query.is_none(),
+            "auth must not be carried in the query string, got: {:?}",
+            seen.raw_query
+        );
+        assert_eq!(
+            seen.headers.get(HEADER_PAYMENT_UID).unwrap(),
+            "payment-abc"
+        );
+        let timestamp = seen
+            .headers
+            .get(HEADER_ORACLE_TS)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let signature_b58 = seen
+            .headers
+            .get(HEADER_ORACLE_SIG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
 
-        let mut message = Vec::new();
-        message.extend_from_slice(VERDICT_SIGNATURE_DOMAIN);
-        message.push(0);
-        message.extend_from_slice(b"listing-123");
-        message.push(0);
-        message.extend_from_slice(b"payment-abc");
-        message.push(0);
-        message.extend_from_slice(timestamp.as_bytes());
+        // Message format is `forge-oracle-v1|{listing_id}|{payment_uid_hex}|{ts}|{host}`,
+        // verbatim from the pinned http402-forge-api contract
+        // (docs/ESCROW_TWO_DOORS.md §4 "Binding").
+        let parsed = reqwest::Url::parse(&base_url_for_message).unwrap();
+        let host = format!("{}:{}", parsed.host_str().unwrap(), parsed.port().unwrap());
+        let message = format!("forge-oracle-v1|listing-123|payment-abc|{timestamp}|{host}");
 
         let sig_bytes = bs58::decode(signature_b58).into_vec().unwrap();
         let mut sb = [0u8; 64];
         sb.copy_from_slice(&sig_bytes);
         let sig = ed25519_dalek::Signature::from_bytes(&sb);
         let vk: VerifyingKey = key.verifying_key();
-        assert!(vk.verify(&message, &sig).is_ok());
+        assert!(vk.verify(message.as_bytes(), &sig).is_ok());
     }
 
     #[tokio::test]
