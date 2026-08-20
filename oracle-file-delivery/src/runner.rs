@@ -46,15 +46,14 @@ impl ProfileRunner for FileDeliveryProfileRunner {
             .fetch(&ctx.job.sla_hash, ArtifactKind::Sla)
             .await?;
 
-        // The on-chain job carries no separate Forge `listing_id`; in the
-        // escrow-preview scenario a payment is 1:1 with the listing it funds,
-        // so `payment_uid` is the only per-job identifier available and is
-        // used for both the path segment and the auth field the step 1
-        // contract requires.
+        // The Forge listing identity flows from the SLA (published by Forge,
+        // carried through unmodified) — it is never derived from or replaced
+        // by the payment UID, which remains a separate auth field on the
+        // verdict request per the step 1 contract.
         let payment_uid_hex = hex::encode(ctx.job.payment_uid);
         let evidence = self
             .verdict_fetcher
-            .fetch_and_verify(&payment_uid_hex, &payment_uid_hex, &ctx.job.delivery_hash)
+            .fetch_and_verify(&sla.listing_id, &payment_uid_hex, &ctx.job.delivery_hash)
             .await?;
 
         let result = OracleEvaluator::evaluate(&*self.evaluator, ctx, &sla, &evidence).await?;
@@ -170,6 +169,7 @@ mod tests {
         let sla = FileDeliverySla {
             version: 1,
             profile_id: PROFILE_ID.into(),
+            listing_id: "listing-approve-mp4".into(),
             payment_uid: "aa".repeat(32),
             buyer_nonce: None,
             expected_size_bytes_min: 1,
@@ -237,6 +237,7 @@ mod tests {
         let sla = FileDeliverySla {
             version: 1,
             profile_id: PROFILE_ID.into(),
+            listing_id: "listing-reject-mismatch".into(),
             payment_uid: "bb".repeat(32),
             buyer_nonce: None,
             expected_size_bytes_min: 1,

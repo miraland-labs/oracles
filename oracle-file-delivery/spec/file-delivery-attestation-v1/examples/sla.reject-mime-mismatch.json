@@ -1,6 +1,7 @@
 {
   "version": 1,
   "profile_id": "x402/oracles/file-delivery/attestation/v1",
+  "listing_id": "6f9619ff-8b86-d011-b42d-00cf4fc964ff",
   "expected_size_bytes_min": 1024,
   "expected_size_bytes_max": 1048576,
   "expected_mime": "image/png"

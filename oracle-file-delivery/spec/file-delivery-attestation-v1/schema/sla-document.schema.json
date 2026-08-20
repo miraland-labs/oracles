@@ -2,10 +2,15 @@
   "title": "x402/oracles/file-delivery/attestation/v1 SLA document",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "profile_id", "expected_size_bytes_min", "expected_size_bytes_max"],
+  "required": ["version", "profile_id", "listing_id", "expected_size_bytes_min", "expected_size_bytes_max"],
   "properties": {
     "version": { "const": 1 },
     "profile_id": { "const": "x402/oracles/file-delivery/attestation/v1" },
+    "listing_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Forge's listing UUID for the listing this SLA's delivery is judged against, exactly as Forge publishes it. Distinct from payment_uid; never derived from it."
+    },
     "expected_size_bytes_min": { "type": "integer", "minimum": 0 },
     "expected_size_bytes_max": { "type": "integer", "minimum": 0 },
     "expected_mime": { "type": "string" },
