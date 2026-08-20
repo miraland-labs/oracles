@@ -18,7 +18,11 @@ This sits alongside the native-binary path in
 | `oracle-onchain-transfer-mainnet.service` | systemd unit for the mainnet container. References `oracle-onchain-transfer-mainnet:current`. |
 | `onchain-transfer-devnet.env.example` | Reference env file for devnet. Copy to `/etc/oracle/onchain-transfer-devnet.env` and fill in. |
 | `onchain-transfer-mainnet.env.example` | Reference env file for mainnet. Copy to `/etc/oracle/onchain-transfer-mainnet.env` and fill in. |
-| `oracle-deploy.sh` | Build + tag + restart + health-probe. Auto-rolls back on health failure. Pass `--unit oracle-onchain-transfer-devnet` (default) or `--unit oracle-onchain-transfer-mainnet`. |
+| `oracle-file-delivery-devnet.service` | systemd unit for preview file-delivery (devnet). References `oracle-file-delivery-devnet:current`. Port **4022**. |
+| `file-delivery-devnet.env.example` | Reference env for preview file-delivery. Copy to `/etc/oracle/file-delivery-devnet.env`. |
+| `oracle-file-delivery-devnet-setup.sh` | Idempotent one-shot: DB + keypair + env + unit on a host that already runs onchain-transfer, then first deploy. |
+| `oracle-file-delivery-devnet-deploy.sh` | Wrapper: `oracle-deploy.sh --unit oracle-file-delivery-devnet`. |
+| `oracle-deploy.sh` | Build + tag + restart + health-probe. Auto-rolls back on health failure. Pass `--unit oracle-onchain-transfer-devnet` (default), `--unit oracle-onchain-transfer-mainnet`, or `--unit oracle-file-delivery-devnet`. |
 
 The workspace-level [`.dockerignore`](../../.dockerignore) keeps the
 build context small (no `target/`, no `.git/`, no `.kiro/`, no keypair
@@ -345,6 +349,39 @@ sends container stdout/stderr to journald with a per-cluster tag. Both
 `journalctl -u oracle-onchain-transfer-devnet.service` and
 `journalctl -t oracle-onchain-transfer-devnet` find the logs;
 `docker logs -f oracle-onchain-transfer-devnet` is equivalent.
+
+## Preview: `oracle-file-delivery` on the same host
+
+Same Docker + systemd + host-Postgres shape as onchain-transfer, **devnet
+only** (Forge preview). Isolation from the sibling family:
+
+| Concern | onchain-transfer | file-delivery preview |
+| --- | --- | --- |
+| Image / container / unit | `oracle-onchain-transfer-{devnet,mainnet}` | `oracle-file-delivery-devnet` |
+| BIND_ADDR | `4021` / `4031` | `4022` |
+| Postgres database | `oracle_onchain_transfer_*` | `oracle_file_delivery_devnet` |
+| Keypair | `/var/lib/oracle/onchain-transfer-*/` | `/var/lib/oracle/file-delivery-devnet/` |
+| Extra env | `TRANSFER_CLUSTER` | `FORGE_VERDICT_BASE_URL=https://preview.forge.http402.trade` |
+
+Do not share keypairs across families. Do not point this unit at
+`https://forge.http402.trade`. There is no file-delivery mainnet unit yet.
+
+On a box that already has onchain-transfer:
+
+```bash
+cd /opt/src/oracles   # or your checkout
+sudo bash scripts/docker/oracle-file-delivery-devnet-setup.sh \
+    --keypair /path/to/oracle-keypair.json
+```
+
+That creates the DB, installs the unit/env/keypair, then builds and
+starts the container. Later rebuilds:
+
+```bash
+sudo bash scripts/docker/oracle-file-delivery-devnet-deploy.sh
+```
+
+Health: `curl -fsS http://127.0.0.1:4022/health`.
 
 ## Adapting for other families
 

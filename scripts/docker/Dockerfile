@@ -2,9 +2,10 @@
 #
 # Multi-stage build for any oracle family. Cluster is selected at build time
 # via CARGO_FEATURES (devnet → `sla-escrow-api/devnet` compile-time program id).
-# Deploy one image per cluster on dual-cluster hosts:
+# Deploy one image per family per cluster on dual-cluster hosts, e.g.:
 #   oracle-onchain-transfer-devnet:current
 #   oracle-onchain-transfer-mainnet:current
+#   oracle-file-delivery-devnet:current
 #
 # Build (devnet example):
 #   cd /path/to/oracles
@@ -12,6 +13,10 @@
 #       --build-arg FAMILY=onchain-transfer \
 #       --build-arg CARGO_FEATURES=devnet \
 #       -t oracle-onchain-transfer-devnet:$(git rev-parse --short HEAD) .
+#   docker build -f scripts/docker/Dockerfile \
+#       --build-arg FAMILY=file-delivery \
+#       --build-arg CARGO_FEATURES=devnet \
+#       -t oracle-file-delivery-devnet:$(git rev-parse --short HEAD) .
 #
 # Run via the systemd units under scripts/docker/ — never `docker run`
 # the image directly in production.

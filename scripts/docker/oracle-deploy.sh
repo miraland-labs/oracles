@@ -10,6 +10,7 @@
 # Usage:
 #   sudo bash oracle-deploy.sh                                       # build + deploy onchain-transfer-devnet
 #   sudo bash oracle-deploy.sh --unit oracle-onchain-transfer-mainnet
+#   sudo bash oracle-deploy.sh --unit oracle-file-delivery-devnet
 #   sudo bash oracle-deploy.sh --skip-build                          # redeploy current SHA (re-tag only)
 #   sudo bash oracle-deploy.sh --rollback                            # restore the previous :current tag
 #
@@ -208,8 +209,8 @@ warn_if_loopback_only() {
    (B) Front the loopback port with nginx / Caddy / Cloudflare for TLS
        termination, then expose :443 only. Required for mainnet.
 
-   See scripts/docker/onchain-transfer-{devnet,mainnet}.env.example for
-   the documented Posture A / Posture B comment block.
+   See scripts/docker/${FAMILY}-${CLUSTER}.env.example for the documented
+   Posture A / Posture B comment block.
 
 EOF
 }
@@ -228,7 +229,7 @@ if ! systemctl list-unit-files "${SERVICE}" --no-legend 2>/dev/null | grep -q "^
 fi
 if [[ ! -f "$ENV_FILE" ]]; then
     echo "env file not found: ${ENV_FILE}" >&2
-    echo "see scripts/docker/onchain-transfer-${UNIT_SUFFIX#onchain-transfer-}.env.example" >&2
+    echo "see scripts/docker/${FAMILY}-${CLUSTER}.env.example" >&2
     exit 65
 fi
 

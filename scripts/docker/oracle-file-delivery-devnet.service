@@ -1,0 +1,69 @@
+# systemd unit for the Dockerized `oracle-file-delivery` running
+# against Solana **devnet** (Forge preview).
+#
+# Co-exists with oracle-onchain-transfer on the same host:
+#   different image, container name, unit, env file, keypair dir, port, DB.
+# Does not replace or restart the onchain-transfer units.
+#
+# Install (preferred):
+#   sudo bash scripts/docker/oracle-file-delivery-devnet-setup.sh \
+#       --keypair /path/to/oracle-keypair.json
+#
+# Install (manual):
+#   sudo install -m 0644 oracle-file-delivery-devnet.service \
+#       /etc/systemd/system/oracle-file-delivery-devnet.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now oracle-file-delivery-devnet.service
+#
+# Operate:
+#   sudo systemctl status  oracle-file-delivery-devnet.service
+#   sudo systemctl restart oracle-file-delivery-devnet.service
+#   sudo journalctl -u oracle-file-delivery-devnet.service -f
+#   docker logs -f oracle-file-delivery-devnet
+#
+# Prerequisites (set up by oracle-file-delivery-devnet-setup.sh):
+#   /etc/oracle/file-delivery-devnet.env
+#   /var/lib/oracle/file-delivery-devnet/oracle-keypair.json (mode 0600)
+#   docker image: oracle-file-delivery-devnet:current
+
+[Unit]
+Description=x402 oracle-file-delivery (devnet / Forge preview) — Dockerized
+Documentation=https://github.com/miraland-labs/oracles
+After=docker.service network-online.target postgresql.service
+Requires=docker.service
+Wants=network-online.target postgresql.service
+
+[Service]
+TimeoutStartSec=30
+TimeoutStopSec=20
+
+ExecStartPre=-/usr/bin/docker rm -f oracle-file-delivery-devnet
+ExecStart=/usr/bin/docker run \
+    --rm \
+    --name oracle-file-delivery-devnet \
+    --network host \
+    --pull=never \
+    --read-only \
+    --tmpfs /tmp:size=64m \
+    --env-file /etc/oracle/file-delivery-devnet.env \
+    -v /var/lib/oracle/file-delivery-devnet/oracle-keypair.json:/keys/oracle-keypair.json:ro \
+    --memory 1g \
+    --cpus 1 \
+    --log-driver journald \
+    --log-opt tag=oracle-file-delivery-devnet \
+    oracle-file-delivery-devnet:current
+
+ExecStop=/usr/bin/docker stop -t 15 oracle-file-delivery-devnet
+
+# Restart policy: on-failure (not always). If the binary panics on bad
+# config we want operator intervention, not a tight restart loop.
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
