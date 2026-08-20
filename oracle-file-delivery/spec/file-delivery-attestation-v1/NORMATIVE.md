@@ -108,6 +108,8 @@ The SLA document MUST validate against
 | --------------------------- | --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `version`                   | `u32`                 | yes      | MUST be `1`.                                                                                                           |
 | `profile_id`                | `string`              | yes      | MUST be `x402/oracles/file-delivery/attestation/v1`.                                                                            |
+| `listing_id`                | `string`              | yes      | Forge listing identity exactly as Forge publishes it (the `{listing_id}` path segment of the oracle verdict door). Identifies the listing being judged; never derived from or replaced by `payment_uid`. |
+| `payment_uid`                | 64-char hex `string` | yes      | On-chain `Payment.payment_uid` this SLA is bound to. Carried on the verdict request as `X-Forge-Payment-Uid` alongside `listing_id`, not as a substitute for it.       |
 | `expected_size_bytes_min`   | `u64`                 | yes      | Lower bound (inclusive) on raw byte size.                                                                              |
 | `expected_size_bytes_max`   | `u64`                 | yes      | Upper bound (inclusive). Defends against a 1-byte file passing as a video.                                             |
 | `expected_mime`             | `string` (optional)   | no       | If present, sniffed MIME of the leading 512 bytes must match (case-insensitive prefix match against IANA media types). |
