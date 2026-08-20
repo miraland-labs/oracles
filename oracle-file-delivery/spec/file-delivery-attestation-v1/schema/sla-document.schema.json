@@ -2,10 +2,22 @@
   "title": "x402/oracles/file-delivery/attestation/v1 SLA document",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "profile_id", "expected_size_bytes_min", "expected_size_bytes_max"],
+  "required": ["version", "profile_id", "listing_id", "payment_uid", "expected_size_bytes_min", "expected_size_bytes_max"],
   "properties": {
     "version": { "const": 1 },
     "profile_id": { "const": "x402/oracles/file-delivery/attestation/v1" },
+    "listing_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The Forge listing identity exactly as Forge publishes it (listing UUID from GET /api/v1/listings/{id}). Distinct from payment_uid: this is the listing being judged, never derived from or replaced by the payment identifier."
+    },
+    "payment_uid": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Hex-encoded 32-byte payment_uid from the on-chain Payment this SLA is bound to. A payment identifier, not a listing identity."
+    },
     "expected_size_bytes_min": { "type": "integer", "minimum": 0 },
     "expected_size_bytes_max": { "type": "integer", "minimum": 0 },
     "expected_mime": { "type": "string" },

@@ -164,6 +164,7 @@ mod tests {
         FileDeliverySla {
             version: 1,
             profile_id: PROFILE_ID.into(),
+            listing_id: "550e8400-e29b-41d4-a716-446655440000".into(),
             payment_uid: "00".repeat(32),
             buyer_nonce: None,
             expected_size_bytes_min: 1_000,
