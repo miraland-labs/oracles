@@ -8,6 +8,12 @@ use crate::PROFILE_ID;
 pub struct FileDeliverySla {
     pub version: u32,
     pub profile_id: String,
+    /// REQUIRED. Forge listing identity exactly as Forge publishes it — the
+    /// `{listing_id}` path segment of the oracle verdict door
+    /// (`GET /api/v1/oracle/listings/{listing_id}/artifact`, pinned
+    /// `http402-forge-api` contract). Identifies the listing being judged.
+    /// Distinct from `payment_uid`: never derived from or replaced by it.
+    pub listing_id: String,
     /// REQUIRED (Wave B §1.2). Hex-encoded 32-byte `payment_uid` from the
     /// on-chain `Payment` this SLA is bound to. Hashed into `Payment.sla_hash`
     /// so the SLA is cryptographically tied to one payment.

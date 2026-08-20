@@ -2,14 +2,34 @@
   "title": "x402/oracles/file-delivery/attestation/v1 SLA document",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "profile_id", "expected_size_bytes_min", "expected_size_bytes_max"],
+  "required": [
+    "version",
+    "profile_id",
+    "listing_id",
+    "payment_uid",
+    "expected_size_bytes_min",
+    "expected_size_bytes_max"
+  ],
   "properties": {
     "version": { "const": 1 },
     "profile_id": { "const": "x402/oracles/file-delivery/attestation/v1" },
+    "listing_id": {
+      "type": "string",
+      "description": "Forge listing identity, exactly as Forge publishes it (the {id} path segment of the oracle verdict door, GET /api/v1/oracle/listings/{listing_id}/artifact). Distinct from payment_uid: this identifies the listing being judged, not the payment.",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "payment_uid": {
+      "type": "string",
+      "description": "Hex-encoded 32-byte payment_uid from the on-chain Payment this SLA is bound to. Not a listing identity.",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "expected_size_bytes_min": { "type": "integer", "minimum": 0 },
     "expected_size_bytes_max": { "type": "integer", "minimum": 0 },
     "expected_mime": { "type": "string" },
     "expected_extension": { "type": "string" },
-    "attestor_pubkey": { "type": "string", "minLength": 32, "maxLength": 44 }
+    "attestor_pubkey": { "type": "string", "minLength": 32, "maxLength": 44 },
+    "buyer_nonce": { "type": "string" }
   }
 }

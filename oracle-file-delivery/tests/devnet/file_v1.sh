@@ -25,10 +25,12 @@ BLOB_FILE="${BLOB_FILE:-./test-fixtures/example.mp4}"
 trap 'rm -f "$SLA_FILE"' EXIT
 
 # 5 MiB minimum, 10 MiB maximum (typical short-clip range).
-cat > "$SLA_FILE" <<'JSONEOF'
+cat > "$SLA_FILE" <<JSONEOF
 {
   "version": 1,
   "profile_id": "x402/file-delivery/attestation/v1",
+  "listing_id": "${LISTING_ID:?LISTING_ID is required (Forge listing identity, e.g. from GET /api/v1/listings)}",
+  "payment_uid": "${PAYMENT_UID:?PAYMENT_UID is required}",
   "expected_size_bytes_min": 5242880,
   "expected_size_bytes_max": 10485760,
   "expected_mime": "video/mp4"
@@ -84,8 +86,8 @@ echo "BLOB_SIZE=$BLOB_SIZE"
 #                         FROM oracle_jobs WHERE delivery_hash = '$BLOB_HASH';"
 
 cat <<NOTE
-Runbook ready. Configure SELLER_TOKEN, PAYMENT_UID, BUYER, and run through
-the numbered steps. For the streaming-fetch path verify that
+Runbook ready. Configure SELLER_TOKEN, LISTING_ID, PAYMENT_UID, BUYER, and
+run through the numbered steps. For the streaming-fetch path verify that
 GET $REGISTRY_BASE/$BLOB_HASH | shasum -a 256
 returns $BLOB_HASH (the registry re-verifies before serving — a hash
 mismatch surfaces as 500).
