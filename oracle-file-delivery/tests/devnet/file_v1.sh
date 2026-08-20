@@ -29,6 +29,7 @@ cat > "$SLA_FILE" <<'JSONEOF'
 {
   "version": 1,
   "profile_id": "x402/file-delivery/attestation/v1",
+  "listing_id": "550e8400-e29b-41d4-a716-446655440000",
   "expected_size_bytes_min": 5242880,
   "expected_size_bytes_max": 10485760,
   "expected_mime": "video/mp4"

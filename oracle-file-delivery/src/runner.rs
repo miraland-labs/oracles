@@ -46,15 +46,15 @@ impl ProfileRunner for FileDeliveryProfileRunner {
             .fetch(&ctx.job.sla_hash, ArtifactKind::Sla)
             .await?;
 
-        // The on-chain job carries no separate Forge `listing_id`; in the
-        // escrow-preview scenario a payment is 1:1 with the listing it funds,
-        // so `payment_uid` is the only per-job identifier available and is
-        // used for both the path segment and the auth field the step 1
-        // contract requires.
+        // The Forge listing identity flows from the SLA (published by Forge
+        // on the listing, carried in the SLA the seller and buyer agreed to)
+        // — never derived from or replaced by `payment_uid`, which is a
+        // separate per-payment identifier used only for the
+        // `X-Forge-Payment-Uid` auth field the step 1 contract requires.
         let payment_uid_hex = hex::encode(ctx.job.payment_uid);
         let evidence = self
             .verdict_fetcher
-            .fetch_and_verify(&payment_uid_hex, &payment_uid_hex, &ctx.job.delivery_hash)
+            .fetch_and_verify(&sla.listing_id, &payment_uid_hex, &ctx.job.delivery_hash)
             .await?;
 
         let result = OracleEvaluator::evaluate(&*self.evaluator, ctx, &sla, &evidence).await?;
@@ -170,6 +170,7 @@ mod tests {
         let sla = FileDeliverySla {
             version: 1,
             profile_id: PROFILE_ID.into(),
+            listing_id: "550e8400-e29b-41d4-a716-446655440000".into(),
             payment_uid: "aa".repeat(32),
             buyer_nonce: None,
             expected_size_bytes_min: 1,
@@ -226,7 +227,11 @@ mod tests {
         // Confirm the delivered-file evidence really came from the Forge
         // verdict endpoint (not a registry blob route): the mock verdict
         // server recorded the request.
-        assert!(seen.lock().await.is_some());
+        let seen_listing_id = seen.lock().await.clone().unwrap();
+        assert_eq!(
+            seen_listing_id, "550e8400-e29b-41d4-a716-446655440000",
+            "the verdict request path must carry the SLA's Forge listing_id, not payment_uid"
+        );
     }
 
     /// Deliberate reject: the verdict endpoint returns a file whose bytes
@@ -237,6 +242,7 @@ mod tests {
         let sla = FileDeliverySla {
             version: 1,
             profile_id: PROFILE_ID.into(),
+            listing_id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8".into(),
             payment_uid: "bb".repeat(32),
             buyer_nonce: None,
             expected_size_bytes_min: 1,

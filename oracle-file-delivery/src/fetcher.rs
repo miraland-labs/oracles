@@ -8,9 +8,12 @@
 //!
 //! `GET {FORGE_VERDICT_BASE_URL}/api/v1/oracle/listings/{listing_id}/artifact`
 //!
-//! — authenticated with the exact headers and signed-message format Forge
-//! publishes for that route: `X-Forge-Payment-Uid`, `X-Forge-Oracle-Ts`, and
-//! `X-Forge-Oracle-Sig` (base58 Ed25519) over the UTF-8 message
+//! `{listing_id}` is the Forge listing identity carried on the SLA
+//! (`FileDeliverySla::listing_id`), exactly as Forge publishes it — never
+//! derived from or replaced by `payment_uid`. Authenticated with the exact
+//! headers and signed-message format Forge publishes for that route:
+//! `X-Forge-Payment-Uid`, `X-Forge-Oracle-Ts`, and `X-Forge-Oracle-Sig`
+//! (base58 Ed25519) over the UTF-8 message
 //! `forge-oracle-v1|{listing_id}|{payment_uid_hex}|{ts}|{host}`. The response
 //! stream is treated exactly like the payment door treats it: SHA-256 is
 //! computed incrementally over the raw bytes (never buffered in full) and
