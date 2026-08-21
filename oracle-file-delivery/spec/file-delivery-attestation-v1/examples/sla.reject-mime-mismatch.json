@@ -1,6 +1,7 @@
 {
   "version": 1,
   "profile_id": "x402/oracles/file-delivery/attestation/v1",
+  "forge_listing_id": "6c1f6e1a-3b7d-4a19-9c2e-2f8b6d1e9a01",
   "expected_size_bytes_min": 1024,
   "expected_size_bytes_max": 1048576,
   "expected_mime": "image/png"

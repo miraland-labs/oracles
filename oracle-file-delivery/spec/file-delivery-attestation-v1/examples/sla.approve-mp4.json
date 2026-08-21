@@ -1,6 +1,7 @@
 {
   "version": 1,
   "profile_id": "x402/oracles/file-delivery/attestation/v1",
+  "forge_listing_id": "550e8400-e29b-41d4-a716-446655440000",
   "expected_size_bytes_min": 1048576,
   "expected_size_bytes_max": 10485760,
   "expected_mime": "video/mp4",

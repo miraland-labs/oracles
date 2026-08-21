@@ -158,6 +158,7 @@ async fn minio_round_trip_5mib_blob() {
     let sla = FileDeliverySla {
         version: 1,
         profile_id: "x402/oracles/file-delivery/attestation/v1".into(),
+        forge_listing_id: "listing-minio-integration".into(),
         payment_uid: "00".repeat(32),
         buyer_nonce: None,
         expected_size_bytes_min: 4 * 1024 * 1024,
