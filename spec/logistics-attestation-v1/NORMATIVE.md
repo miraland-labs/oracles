@@ -48,5 +48,4 @@ Binary registers under profile id at boot. Merchants set `oracleAuthority` to op
 
 ## References
 
-- [pr402-link EVOLUTION_RFC.md](../../pr402-link/docs/EVOLUTION_RFC.md)
-- [Multi-category oracle architecture](../../.kiro/specs/multi-category-oracle-architecture/design.md)
+- [Multi-category oracle architecture](https://github.com/miraland-labs/x402/blob/main/.kiro/specs/multi-category-oracle-architecture/design.md)

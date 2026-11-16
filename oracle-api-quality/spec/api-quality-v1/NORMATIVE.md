@@ -87,7 +87,7 @@ The SLA document MUST validate against `[schema/sla-document.schema.json](schema
 | `min_body_length`                    | If present, the UTF-8 length of the **canonical JSON serialization** of `response_body` used by the evaluator (stringify of the `response_body` value) MUST be ≥ this minimum.                                                                 |
 
 
-Omitted keys use implementation defaults: `max_latency_ms` = 5000, `min_status_code` = 200, `max_status_code` = 299, `required_fields` = `[]` (see `[SlaDocument](../../src/types.rs)`). A **minimal** SLA contains only `version`, `endpoint`, and `method` — see `[examples/sla.tiny.json](examples/sla.tiny.json)`.
+Omitted keys use implementation defaults: `max_latency_ms` = 5000, `min_status_code` = 200, `max_status_code` = 299, `required_fields` = `[]` (see `[SlaDocument](../../src/sla.rs)`). A **minimal** SLA contains only `version`, `endpoint`, and `method` — see `[examples/sla.tiny.json](examples/sla.tiny.json)`.
 
 ---
 
